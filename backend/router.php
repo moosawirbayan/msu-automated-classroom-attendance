@@ -16,6 +16,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
     exit();
 }
 
+// Normalize Authorization header — PHP CLI on Windows doesn't always expose it via getallheaders()
+if (!isset($_SERVER['HTTP_AUTHORIZATION'])) {
+    $allHeaders = function_exists('getallheaders') ? getallheaders() : [];
+    if (isset($allHeaders['Authorization'])) {
+        $_SERVER['HTTP_AUTHORIZATION'] = $allHeaders['Authorization'];
+    } elseif (isset($allHeaders['authorization'])) {
+        $_SERVER['HTTP_AUTHORIZATION'] = $allHeaders['authorization'];
+    }
+}
+
 // Route to the requested PHP file
 $uri = parse_url($_SERVER['REQUEST_URI'], PHP_URL_PATH);
 $file = __DIR__ . $uri;
