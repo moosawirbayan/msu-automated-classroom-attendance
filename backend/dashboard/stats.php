@@ -15,8 +15,8 @@ $database = new Database();
 $db = $database->getConnection();
 
 // Get user ID from token (simplified - in production use JWT)
-$headers = getallheaders();
-$token = isset($headers['Authorization']) ? str_replace('Bearer ', '', $headers['Authorization']) : '';
+$authHeader = $_SERVER['HTTP_AUTHORIZATION'] ?? (function_exists('getallheaders') ? (getallheaders()['Authorization'] ?? '') : '');
+$token = str_replace('Bearer ', '', $authHeader);
 
 if (empty($token)) {
     http_response_code(401);
