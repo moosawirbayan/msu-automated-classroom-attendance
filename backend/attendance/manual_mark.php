@@ -16,8 +16,8 @@ require_once '../core/Database.php';
 $database = new Database();
 $db = $database->getConnection();
 
-$headers = getallheaders();
-$token = isset($headers['Authorization']) ? str_replace('Bearer ', '', $headers['Authorization']) : '';
+$authHeader = $_SERVER['HTTP_AUTHORIZATION'] ?? (function_exists('getallheaders') ? (getallheaders()['Authorization'] ?? '') : '');
+$token = str_replace('Bearer ', '', $authHeader);
 if (empty($token)) {
     http_response_code(401);
     echo json_encode(['success' => false, 'message' => 'No token provided']); exit();
