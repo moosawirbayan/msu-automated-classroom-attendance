@@ -22,6 +22,8 @@ $file = __DIR__ . $uri;
 
 // Serve PHP files
 if (is_file($file) && pathinfo($file, PATHINFO_EXTENSION) === 'php') {
+    // Change working directory to the file's directory so relative require_once paths work
+    chdir(dirname($file));
     require $file;
     return true;
 }
