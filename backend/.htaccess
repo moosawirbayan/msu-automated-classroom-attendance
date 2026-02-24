@@ -1,17 +1,11 @@
-# Enable CORS for all origins (for development)
-<IfModule mod_headers.c>
-    Header always set Access-Control-Allow-Origin "*"
-    Header always set Access-Control-Allow-Methods "POST, GET, PUT, DELETE, OPTIONS"
-    Header always set Access-Control-Allow-Headers "Content-Type, Authorization, X-Requested-With, Accept"
-    Header always set Access-Control-Max-Age "3600"
-</IfModule>
+# CORS is handled by PHP (config/cors.php and core/cors.php).
+# Do NOT set CORS headers here — it causes duplicate headers (*, *) on XAMPP.
 
 # Handle OPTIONS requests
 <IfModule mod_rewrite.c>
     RewriteEngine On
     RewriteCond %{REQUEST_METHOD} OPTIONS
-    RewriteRule ^(.*)$ $1 [R=200,L,E=HTTP_ORIGIN:%{HTTP:Origin}]
-    Header always set Access-Control-Allow-Origin "*" env=HTTP_ORIGIN
+    RewriteRule ^(.*)$ $1 [R=200,L]
 </IfModule>
 
 # PHP Settings
