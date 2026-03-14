@@ -35,10 +35,17 @@ if (empty($data->name) || empty($data->email) || empty($data->password) || empty
     exit();
 }
 
+$email = trim($data->email);
+if (!filter_var($email, FILTER_VALIDATE_EMAIL)) {
+    http_response_code(400);
+    echo json_encode(['success' => false, 'message' => 'Please enter a valid email address']);
+    exit();
+}
+
 try {
     // Check if email exists
     $check = $db->prepare("SELECT id FROM users WHERE email = ?");
-    $check->execute([$data->email]);
+    $check->execute([$email]);
     
     if ($check->rowCount() > 0) {
         http_response_code(400);
@@ -61,7 +68,7 @@ try {
     
     $hashed = password_hash($data->password, PASSWORD_BCRYPT);
     
-    if ($stmt->execute([$data->name, $data->email, $hashed, $data->department, $data->employee_id])) {
+    if ($stmt->execute([$data->name, $email, $hashed, $data->department, $data->employee_id])) {
         http_response_code(201);
         echo json_encode([
             'success' => true,
