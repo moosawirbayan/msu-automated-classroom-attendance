@@ -51,6 +51,10 @@ $validator->required($data->first_name ?? '', 'first_name');
 $validator->required($data->last_name ?? '', 'last_name');
 $validator->required($data->mobile_number ?? '', 'mobile_number');
 
+$validator->required($data->parent_email ?? '', 'parent_email');
+if (!empty($data->parent_email) && !filter_var(trim($data->parent_email), FILTER_VALIDATE_EMAIL)) {
+    Response::validationError(['parent_email' => 'Invalid parent email format']);
+
 if (!$validator->passes()) {
     Response::validationError($validator->getErrors());
 }
@@ -88,7 +92,7 @@ try {
         // Create new student record
         $insertStudent = $db->prepare("
             INSERT INTO students (student_id, first_name, middle_initial, last_name, email, phone, created_at) 
-            VALUES (?, ?, ?, ?, ?, ?, NOW())
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, NOW())
         ");
         $insertStudent->execute([
             $data->student_id,
@@ -96,6 +100,8 @@ try {
             $data->middle_initial ?? null,
             $data->last_name,
             $data->email ?? null,
+            trim($data->parent_email) ?? null,
+            !empty($data->parent_name) ? trim($data->parent_name) : null,
             $data->mobile_number
         ]);
         $studentDbId = $db->lastInsertId();
