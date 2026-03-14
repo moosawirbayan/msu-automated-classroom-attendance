@@ -22,9 +22,16 @@ if (!$data || empty($data->email) || empty($data->password)) {
     exit();
 }
 
+$email = trim($data->email);
+if (!filter_var($email, FILTER_VALIDATE_EMAIL)) {
+    http_response_code(400);
+    echo json_encode(['success' => false, 'message' => 'Please enter a valid email address']);
+    exit();
+}
+
 try {
     $stmt = $db->prepare("SELECT id, name, email, password, role, department, employee_id FROM users WHERE email = ?");
-    $stmt->execute([$data->email]);
+    $stmt->execute([$email]);
     
     if ($stmt->rowCount() === 0) {
         http_response_code(401);
