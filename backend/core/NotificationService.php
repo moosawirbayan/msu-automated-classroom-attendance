@@ -12,23 +12,26 @@ class NotificationService {
         $this->config = require __DIR__ . '/../config/notification.php';
     }
 
+    private function createMailer() {
+        $mail = new PHPMailer(true);
+        $mail->isSMTP();
+        $mail->Host = $this->config['smtp_host'];
+        $mail->SMTPAuth = true;
+        $mail->Username = $this->config['smtp_username'];
+        $mail->Password = $this->config['smtp_password'];
+        $mail->SMTPSecure = PHPMailer::ENCRYPTION_STARTTLS;
+        $mail->Port = $this->config['smtp_port'];
+        $mail->setFrom($this->config['from_email'], $this->config['from_name']);
+        return $mail;
+    }
+
     public function sendAttendanceEmail($toEmail, $parentName, $studentName, $className, $status, $checkInTime) {
         if (empty($this->config['email_enabled']) || empty($toEmail)) {
             return false;
         }
 
-        $mail = new PHPMailer(true);
-
         try {
-            $mail->isSMTP();
-            $mail->Host = $this->config['smtp_host'];
-            $mail->SMTPAuth = true;
-            $mail->Username = $this->config['smtp_username'];
-            $mail->Password = $this->config['smtp_password'];
-            $mail->SMTPSecure = PHPMailer::ENCRYPTION_STARTTLS;
-            $mail->Port = $this->config['smtp_port'];
-
-            $mail->setFrom($this->config['from_email'], $this->config['from_name']);
+            $mail = $this->createMailer();
             $mail->addAddress($toEmail, $parentName ?: 'Parent/Guardian');
             $mail->isHTML(true);
 
@@ -55,6 +58,37 @@ class NotificationService {
             return true;
         } catch (Exception $e) {
             error_log('Notification email failed: ' . $e->getMessage());
+            return false;
+        }
+    }
+
+    public function sendPasswordResetEmail($toEmail, $name, $temporaryPassword) {
+        if (empty($this->config['email_enabled']) || empty($toEmail)) {
+            return false;
+        }
+
+        try {
+            $mail = $this->createMailer();
+            $mail->addAddress($toEmail, $name ?: 'User');
+            $mail->isHTML(true);
+
+            $safeName = htmlspecialchars($name ?: 'User', ENT_QUOTES, 'UTF-8');
+            $safePassword = htmlspecialchars($temporaryPassword, ENT_QUOTES, 'UTF-8');
+
+            $mail->Subject = 'MSU Attendance - Temporary Password';
+            $mail->Body = "
+                <p>Hello {$safeName},</p>
+                <p>Your temporary password is:</p>
+                <p><strong>{$safePassword}</strong></p>
+                <p>Please log in and change your password immediately.</p>
+                <p>MSU Attendance System</p>
+            ";
+            $mail->AltBody = "Hello {$name}, your temporary password is {$temporaryPassword}. Please log in and change your password immediately.";
+
+            $mail->send();
+            return true;
+        } catch (Exception $e) {
+            error_log('Password reset email failed: ' . $e->getMessage());
             return false;
         }
     }
