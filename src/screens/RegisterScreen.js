@@ -47,11 +47,10 @@ export default function RegisterScreen({ navigation }) {
       return;
     }
 
-    // TEMPORARY: Email validation disabled for testing
-    // if (!formData.email.includes('@msuiit.edu.ph')) {
-    //   Alert.alert('Error', 'Please use your institutional email (@msuiit.edu.ph)');
-    //   return;
-    // }
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(formData.email.trim())) {
+      Alert.alert('Error', 'Please enter a valid email address');
+      return;
+    }
 
     if (formData.password !== formData.confirmPassword) {
       Alert.alert('Error', 'Passwords do not match');
@@ -69,7 +68,7 @@ export default function RegisterScreen({ navigation }) {
     try {
       const payload = {
         name: formData.fullName,
-        email: formData.email,
+        email: formData.email.trim(),
         department: formData.department,
         employee_id: formData.employeeId,
         password: formData.password
