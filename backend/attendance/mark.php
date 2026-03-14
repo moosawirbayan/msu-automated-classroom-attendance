@@ -10,6 +10,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
 }
 
 require_once '../core/Database.php';
+require_once '../core/NotificationService.php';
 
 $database = new Database();
 $db = $database->getConnection();
@@ -63,12 +64,37 @@ try {
     $nameParts = array_filter([$student['first_name'], $student['middle_initial'] ? $student['middle_initial'].'.' : null, $student['last_name']]);
     $fullName  = implode(' ', $nameParts);
 
+    // Send email notification to parent/guardian if enabled for this class
+    $notificationSent = false;
+    $classStmt = $db->prepare("SELECT class_name, notify_parents FROM classes WHERE id = ? LIMIT 1");
+    $classStmt->execute([$classId]);
+    $class = $classStmt->fetch(PDO::FETCH_ASSOC);
+
+    if ($class && (int)$class['notify_parents'] === 1) {
+        $contactStmt = $db->prepare("SELECT parent_email, parent_name FROM students WHERE id = ? LIMIT 1");
+        $contactStmt->execute([$studentDbId]);
+        $contact = $contactStmt->fetch(PDO::FETCH_ASSOC);
+
+        if (!empty($contact['parent_email'])) {
+            $notifier = new NotificationService();
+            $notificationSent = $notifier->sendAttendanceEmail(
+                $contact['parent_email'],
+                $contact['parent_name'] ?? '',
+                $fullName,
+                $class['class_name'] ?? 'Class',
+                'present',
+                date('Y-m-d H:i:s')
+            );
+        }
+    }
+
     echo json_encode([
         'success'        => true,
         'message'        => 'Attendance marked successfully',
         'student_name'   => $fullName,
         'student_number' => $student['student_id'],
         'attendance_id'  => $db->lastInsertId(),
+        'parent_notified' => $notificationSent,
     ]);
 
 } catch (Exception $e) {
