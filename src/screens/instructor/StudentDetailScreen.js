@@ -32,6 +32,8 @@ export default function StudentDetailScreen({ route, navigation }) {
     middle_initial: initialData.middle_initial || '',
     last_name:      initialData.last_name      || '',
     email:          initialData.email          || '',
+    parent_email:   initialData.parent_email   || '',
+    parent_name:    initialData.parent_name    || '',
     phone:          initialData.phone          || '',
   });
 
@@ -73,6 +75,8 @@ export default function StudentDetailScreen({ route, navigation }) {
       middle_initial: studentData.middle_initial || '',
       last_name:      studentData.last_name      || '',
       email:          studentData.email          || '',
+      parent_email:   studentData.parent_email   || '',
+      parent_name:    studentData.parent_name    || '',
       phone:          studentData.phone          || '',
     });
     setEditing(true);
@@ -97,6 +101,10 @@ export default function StudentDetailScreen({ route, navigation }) {
       Alert.alert('Validation Error', 'Please enter a valid email address');
       return;
     }
+    if (form.parent_email.trim() && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.parent_email.trim())) {
+      Alert.alert('Validation Error', 'Please enter a valid parent email address');
+      return;
+    }
 
     setSaving(true);
     try {
@@ -108,6 +116,8 @@ export default function StudentDetailScreen({ route, navigation }) {
         middle_initial: form.middle_initial.trim(),
         last_name:      form.last_name.trim(),
         email:          form.email.trim(),
+        parent_email:   form.parent_email.trim(),
+        parent_name:    form.parent_name.trim(),
         phone:          form.phone.trim(),
       }, {
         headers: { Authorization: `Bearer ${token}` },
@@ -121,6 +131,8 @@ export default function StudentDetailScreen({ route, navigation }) {
           middle_initial: form.middle_initial.trim(),
           last_name:      form.last_name.trim(),
           email:          form.email.trim(),
+          parent_email:   form.parent_email.trim(),
+          parent_name:    form.parent_name.trim(),
           phone:          form.phone.trim(),
         }));
         setEditing(false);
@@ -286,6 +298,8 @@ export default function StudentDetailScreen({ route, navigation }) {
               <InfoRow icon="id-card-outline" label="Student ID"    value={studentData.student_id} />
               <InfoRow icon="person-outline"  label="Full Name"     value={fullName} />
               <InfoRow icon="mail-outline"    label="Email"         value={studentData.email} />
+              <InfoRow icon="person-circle-outline" label="Parent/Guardian" value={studentData.parent_name} />
+              <InfoRow icon="mail-open-outline" label="Parent Email" value={studentData.parent_email} />
               <InfoRow icon="call-outline"    label="Mobile Number" value={studentData.phone} />
             </View>
           )}
@@ -403,6 +417,20 @@ export default function StudentDetailScreen({ route, navigation }) {
                 label="Email Address"
                 field="email"
                 placeholder="student@example.com (optional)"
+                keyboardType="email-address"
+                autoCapitalize="none"
+              />
+              <EditField
+                icon="person-circle-outline"
+                label="Parent/Guardian Name"
+                field="parent_name"
+                placeholder="Parent/Guardian full name"
+              />
+              <EditField
+                icon="mail-open-outline"
+                label="Parent/Guardian Email"
+                field="parent_email"
+                placeholder="parent@example.com"
                 keyboardType="email-address"
                 autoCapitalize="none"
               />
