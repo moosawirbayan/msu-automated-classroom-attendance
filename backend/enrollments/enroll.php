@@ -49,6 +49,7 @@ $validator->required($data->class_id ?? '', 'class_id');
 $validator->required($data->student_id ?? '', 'student_id');
 $validator->required($data->first_name ?? '', 'first_name');
 $validator->required($data->last_name ?? '', 'last_name');
+$validator->required($data->program ?? '', 'program');
 $validator->required($data->mobile_number ?? '', 'mobile_number');
 
 $parentEmail = trim($data->parent_email ?? '');
@@ -91,16 +92,17 @@ try {
         }
 
         // Keep parent contact details current for existing students.
-        $updateStudent = $db->prepare("\n            UPDATE students\n            SET parent_email = COALESCE(NULLIF(?, ''), parent_email),\n                parent_name = COALESCE(NULLIF(?, ''), parent_name),\n                phone = COALESCE(NULLIF(?, ''), phone)\n            WHERE id = ?\n        ");
+        $updateStudent = $db->prepare("\n            UPDATE students\n            SET parent_email = COALESCE(NULLIF(?, ''), parent_email),\n                parent_name = COALESCE(NULLIF(?, ''), parent_name),\n                phone = COALESCE(NULLIF(?, ''), phone),\n                program = COALESCE(NULLIF(?, ''), program)\n            WHERE id = ?\n        ");
         $updateStudent->execute([
             $parentEmail,
             $data->parent_name ?? '',
             $data->mobile_number ?? '',
+            $data->program ?? '',
             $studentDbId,
         ]);
     } else {
         // Create new student record
-        $insertStudent = $db->prepare("\n            INSERT INTO students (student_id, first_name, middle_initial, last_name, email, parent_email, parent_name, phone, created_at)\n            VALUES (?, ?, ?, ?, ?, ?, ?, ?, NOW())\n        ");
+        $insertStudent = $db->prepare("\n            INSERT INTO students (student_id, first_name, middle_initial, last_name, email, parent_email, parent_name, phone, program, created_at)\n            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())\n        ");
         $insertStudent->execute([
             $data->student_id,
             $data->first_name,
@@ -110,6 +112,7 @@ try {
             !empty($parentEmail) ? $parentEmail : null,
             !empty($data->parent_name) ? trim($data->parent_name) : null,
             $data->mobile_number,
+            $data->program,
         ]);
         $studentDbId = $db->lastInsertId();
     }
