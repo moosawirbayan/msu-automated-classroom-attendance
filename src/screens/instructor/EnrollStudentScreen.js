@@ -25,6 +25,7 @@ export default function EnrollStudentScreen({ route, navigation }) {
     first_name: '',
     middle_initial: '',
     last_name: '',
+    program: '',
     email: '',
     parent_name: '',
     parent_email: '',
@@ -43,6 +44,10 @@ export default function EnrollStudentScreen({ route, navigation }) {
     }
     if (!studentData.last_name.trim()) {
       Alert.alert('Validation Error', 'Last Name is required');
+      return;
+    }
+    if (!studentData.program.trim()) {
+      Alert.alert('Validation Error', 'Program is required');
       return;
     }
     if (!studentData.mobile_number.trim()) {
@@ -68,6 +73,7 @@ export default function EnrollStudentScreen({ route, navigation }) {
         first_name: studentData.first_name.trim(),
         middle_initial: studentData.middle_initial.trim(),
         last_name: studentData.last_name.trim(),
+        program: studentData.program.trim(),
         email: studentData.email.trim(),
         parent_name: studentData.parent_name.trim(),
         parent_email: studentData.parent_email.trim(),
@@ -195,6 +201,15 @@ export default function EnrollStudentScreen({ route, navigation }) {
             onChangeText={(text) => setStudentData({ ...studentData, email: text })}
             autoCapitalize="none"
             keyboardType="email-address"
+          />
+
+          <Text style={styles.label}>Program *</Text>
+          <TextInput
+            style={styles.input}
+            placeholder="e.g., BS Computer Science"
+            value={studentData.program}
+            onChangeText={(text) => setStudentData({ ...studentData, program: text })}
+            autoCapitalize="words"
           />
 
           {/* Parent/Guardian Information */}
