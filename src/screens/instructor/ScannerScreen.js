@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   View,
   Text,
@@ -7,6 +7,7 @@ import {
   Alert,
   Platform,
 } from 'react-native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Ionicons } from '@expo/vector-icons';
 import { COLORS } from '../../constants/colors';
 import api from '../../config/api';
@@ -42,6 +43,52 @@ export default function ScannerScreen() {
 /* ── Native-only component ─────────────────────────────── */
 function NativeScanner({ scanned, setScanned, paused, setPaused }) {
   const [permission, requestPermission] = useCameraPermissions();
+  const [activeClasses, setActiveClasses] = useState([]);
+  const [selectedClassId, setSelectedClassId] = useState(null);
+
+  useEffect(() => {
+    const loadClasses = async () => {
+      try {
+        const token = await AsyncStorage.getItem('authToken');
+        const response = await api.get('/classes/index.php', {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+
+        if (response.data.success) {
+          const classes = (response.data.data || []).filter((cls) => Number(cls.is_active) === 1);
+          setActiveClasses(classes);
+          if (classes.length > 0) {
+            setSelectedClassId(classes[0].id);
+          }
+        }
+      } catch (error) {
+        console.error('Load active classes error:', error);
+      }
+    };
+
+    loadClasses();
+  }, []);
+
+  const selectedClass = activeClasses.find((cls) => String(cls.id) === String(selectedClassId));
+
+  const chooseClass = () => {
+    if (activeClasses.length === 0) {
+      Alert.alert('No Active Class', 'Please activate at least one class before scanning.');
+      return;
+    }
+
+    Alert.alert(
+      'Select Class',
+      'Choose the active class for this scan session.',
+      [
+        ...activeClasses.map((cls) => ({
+          text: `${cls.class_code} - ${cls.class_name}`,
+          onPress: () => setSelectedClassId(cls.id),
+        })),
+        { text: 'Cancel', style: 'cancel' },
+      ]
+    );
+  };
 
   if (!permission) {
     return <View style={styles.centered}><Text style={styles.errorText}>Checking camera…</Text></View>;
@@ -64,16 +111,24 @@ function NativeScanner({ scanned, setScanned, paused, setPaused }) {
     if (scanned || paused) return;
     setScanned(true);
 
+    if (!selectedClassId) {
+      Alert.alert('Select Class First', 'Choose an active class before scanning.', [
+        { text: 'Choose Class', onPress: () => { setScanned(false); chooseClass(); } },
+        { text: 'Cancel', style: 'cancel', onPress: () => setScanned(false) },
+      ]);
+      return;
+    }
+
     const parts = data.split('|');
-    if (parts.length < 3) {
+    if (parts.length < 2) {
       Alert.alert('Invalid QR Code', 'Please scan a valid student attendance QR code.', [
         { text: 'OK', onPress: () => setScanned(false) },
       ]);
       return;
     }
 
-    const [studentDbId, classId, ...nameParts] = parts;
-    const studentName = nameParts.join(' ');
+    const [studentDbId, , ...nameParts] = parts;
+    const studentName = (nameParts.join(' ') || parts.slice(1).join(' ')).trim();
 
     Alert.alert(
       'Confirm Attendance',
@@ -90,7 +145,7 @@ function NativeScanner({ scanned, setScanned, paused, setPaused }) {
             try {
               const response = await api.post('/attendance/mark.php', {
                 studentId: studentDbId,
-                classId:   classId,
+                classId: selectedClassId,
               });
               if (response.data.success) {
                 Alert.alert(
@@ -127,6 +182,12 @@ function NativeScanner({ scanned, setScanned, paused, setPaused }) {
             <View style={styles.topBar}>
               <Text style={styles.headerTitle}>Scan QR Code</Text>
               <Text style={styles.headerSubtitle}>Point camera at a student's QR code</Text>
+              <TouchableOpacity style={styles.classPickerButton} onPress={chooseClass}>
+                <Ionicons name="book-outline" size={16} color="#fff" />
+                <Text style={styles.classPickerText}>
+                  {selectedClass ? `${selectedClass.class_code}` : 'Select Active Class'}
+                </Text>
+              </TouchableOpacity>
             </View>
 
             {/* Viewfinder corners */}
@@ -190,6 +251,21 @@ const styles = StyleSheet.create({
   topBar: {
     paddingTop: 60,
     alignItems: 'center',
+  },
+  classPickerButton: {
+    marginTop: 12,
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(255,255,255,0.2)',
+    borderRadius: 20,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+  },
+  classPickerText: {
+    color: '#fff',
+    fontSize: 13,
+    fontWeight: '600',
+    marginLeft: 6,
   },
   headerTitle: {
     fontSize: 24,
