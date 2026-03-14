@@ -25,6 +25,33 @@ $db = $database->getConnection();
 $authHeader = $_SERVER['HTTP_AUTHORIZATION'] ?? (function_exists('getallheaders') ? (getallheaders()['Authorization'] ?? '') : '');
 $token = str_replace('Bearer ', '', $authHeader);
 
+<?php
+/**
+ * Enroll Student in a Class
+ * Endpoint: POST /enrollments/enroll.php
+ */
+
+header("Access-Control-Allow-Origin: *");
+header("Access-Control-Allow-Methods: POST, OPTIONS");
+header("Access-Control-Allow-Headers: Content-Type, Authorization");
+header("Content-Type: application/json");
+
+if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
+    http_response_code(200);
+    exit();
+}
+
+require_once '../core/Database.php';
+require_once '../core/Response.php';
+require_once '../core/Validator.php';
+
+$database = new Database();
+$db = $database->getConnection();
+
+// Get user ID from token
+$authHeader = $_SERVER['HTTP_AUTHORIZATION'] ?? (function_exists('getallheaders') ? (getallheaders()['Authorization'] ?? '') : '');
+$token = str_replace('Bearer ', '', $authHeader);
+
 if (empty($token)) {
     http_response_code(401);
     echo json_encode(['success' => false, 'message' => 'No token provided']);
@@ -51,9 +78,10 @@ $validator->required($data->first_name ?? '', 'first_name');
 $validator->required($data->last_name ?? '', 'last_name');
 $validator->required($data->mobile_number ?? '', 'mobile_number');
 
-$validator->required($data->parent_email ?? '', 'parent_email');
-if (!empty($data->parent_email) && !filter_var(trim($data->parent_email), FILTER_VALIDATE_EMAIL)) {
+$parentEmail = trim($data->parent_email ?? '');
+if (!empty($parentEmail) && !filter_var($parentEmail, FILTER_VALIDATE_EMAIL)) {
     Response::validationError(['parent_email' => 'Invalid parent email format']);
+}
 
 if (!$validator->passes()) {
     Response::validationError($validator->getErrors());
@@ -64,7 +92,7 @@ try {
     $verifyStmt = $db->prepare("SELECT id, class_name FROM classes WHERE id = ? AND instructor_id = ?");
     $verifyStmt->execute([$data->class_id, $userId]);
     $class = $verifyStmt->fetch(PDO::FETCH_ASSOC);
-    
+
     if (!$class) {
         http_response_code(403);
         echo json_encode(['success' => false, 'message' => 'You do not have access to this class']);
@@ -78,40 +106,43 @@ try {
 
     if ($existingStudent) {
         $studentDbId = $existingStudent['id'];
-        
+
         // Check if already enrolled in this class
         $checkEnrollment = $db->prepare("SELECT id FROM enrollments WHERE student_id = ? AND class_id = ?");
         $checkEnrollment->execute([$studentDbId, $data->class_id]);
-        
+
         if ($checkEnrollment->rowCount() > 0) {
             http_response_code(400);
             echo json_encode(['success' => false, 'message' => 'Student is already enrolled in this class']);
             exit();
         }
+
+        // Keep parent contact details current for existing students.
+        $updateStudent = $db->prepare("\n            UPDATE students\n            SET parent_email = COALESCE(NULLIF(?, ''), parent_email),\n                parent_name = COALESCE(NULLIF(?, ''), parent_name),\n                phone = COALESCE(NULLIF(?, ''), phone)\n            WHERE id = ?\n        ");
+        $updateStudent->execute([
+            $parentEmail,
+            $data->parent_name ?? '',
+            $data->mobile_number ?? '',
+            $studentDbId,
+        ]);
     } else {
         // Create new student record
-        $insertStudent = $db->prepare("
-            INSERT INTO students (student_id, first_name, middle_initial, last_name, email, phone, created_at) 
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, NOW())
-        ");
+        $insertStudent = $db->prepare("\n            INSERT INTO students (student_id, first_name, middle_initial, last_name, email, parent_email, parent_name, phone, created_at) \n            VALUES (?, ?, ?, ?, ?, ?, ?, ?, NOW())\n        ");
         $insertStudent->execute([
             $data->student_id,
             $data->first_name,
             $data->middle_initial ?? null,
             $data->last_name,
             $data->email ?? null,
-            trim($data->parent_email) ?? null,
+            !empty($parentEmail) ? $parentEmail : null,
             !empty($data->parent_name) ? trim($data->parent_name) : null,
-            $data->mobile_number
+            $data->mobile_number,
         ]);
         $studentDbId = $db->lastInsertId();
     }
 
     // Enroll student in class
-    $enrollStmt = $db->prepare("
-        INSERT INTO enrollments (student_id, class_id, enrolled_date, status) 
-        VALUES (?, ?, NOW(), 'active')
-    ");
+    $enrollStmt = $db->prepare("\n        INSERT INTO enrollments (student_id, class_id, enrolled_date, status) \n        VALUES (?, ?, NOW(), 'active')\n    ");
     $enrollStmt->execute([$studentDbId, $data->class_id]);
 
     // Get the complete student record
