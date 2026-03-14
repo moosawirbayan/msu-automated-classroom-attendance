@@ -38,6 +38,17 @@ try {
         exit();
     }
 
+    // Check class status
+    $classStatusStmt = $db->prepare("SELECT is_active FROM classes WHERE id = ? LIMIT 1");
+    $classStatusStmt->execute([$classId]);
+    $classStatus = $classStatusStmt->fetch(PDO::FETCH_ASSOC);
+
+    if (!$classStatus || (int)$classStatus['is_active'] !== 1) {
+        http_response_code(400);
+        echo json_encode(['success' => false, 'message' => 'This class is inactive. Attendance marking is disabled.']);
+        exit();
+    }
+
     // Check enrollment
     $enrollStmt = $db->prepare("SELECT id FROM enrollments WHERE student_id = ? AND class_id = ? AND status = 'active'");
     $enrollStmt->execute([$studentDbId, $classId]);
