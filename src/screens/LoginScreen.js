@@ -27,33 +27,40 @@ export default function LoginScreen({ navigation }) {
   const isValidEmail = (value) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value);
 
   const buildErrorDetails = (error, actionName) => {
-    const baseURL = error?.config?.baseURL || api.defaults.baseURL || 'Unknown base URL';
-    const endpoint = error?.config?.url || 'Unknown endpoint';
-    const fullUrl = `${baseURL}${endpoint}`;
+    const cfg = (error && error.config) ? error.config : {};
+    const rsp = (error && error.response) ? error.response : null;
+    const req = (error && error.request) ? error.request : null;
 
-    if (error?.response) {
-      const message = error.response?.data?.message || `Server returned ${error.response.status}`;
+    const baseURL = cfg.baseURL || api.defaults.baseURL || 'Unknown base URL';
+    const endpoint = cfg.url || 'Unknown endpoint';
+    const fullUrl = String(baseURL) + String(endpoint);
+
+    if (rsp) {
+      const serverMessage = (rsp.data && rsp.data.message)
+        ? rsp.data.message
+        : ('Server returned ' + rsp.status);
+
       return {
-        title: `${actionName} Failed`,
-        userMessage: `${message}\n\nURL: ${fullUrl}\nStatus: ${error.response.status}`,
+        title: actionName + ' Failed',
+        userMessage: serverMessage + '\n\nURL: ' + fullUrl + '\nStatus: ' + rsp.status,
       };
     }
 
-    if (error?.request) {
+    if (req) {
       return {
-        title: `${actionName} Failed`,
+        title: actionName + ' Failed',
         userMessage:
-          `No response from backend server.\n\n` +
-          `URL: ${fullUrl}\n` +
-          `Code: ${error.code || 'N/A'}\n` +
-          `Timeout: ${error?.config?.timeout || 'N/A'} ms\n\n` +
-          `Check if PHP server is running and phone can open this URL in browser.`,
+          'No response from backend server.\n\n' +
+          'URL: ' + fullUrl + '\n' +
+          'Code: ' + (error && error.code ? error.code : 'N/A') + '\n' +
+          'Timeout: ' + (cfg.timeout || 'N/A') + ' ms\n\n' +
+          'Check if PHP server is running and phone can open this URL in browser.',
       };
     }
 
     return {
-      title: `${actionName} Failed`,
-      userMessage: error?.message || 'Unexpected request error.',
+      title: actionName + ' Failed',
+      userMessage: (error && error.message) ? error.message : 'Unexpected request error.',
     };
   };
 
@@ -78,12 +85,12 @@ export default function LoginScreen({ navigation }) {
       const details = buildErrorDetails(error, 'Reset Password');
       Alert.alert(details.title, details.userMessage);
       console.error('Reset password error details:', {
-        code: error?.code,
-        message: error?.message,
-        baseURL: error?.config?.baseURL || api.defaults.baseURL,
-        endpoint: error?.config?.url,
-        status: error?.response?.status,
-        response: error?.response?.data,
+        code: error && error.code,
+        message: error && error.message,
+        baseURL: (error && error.config && error.config.baseURL) || api.defaults.baseURL,
+        endpoint: error && error.config && error.config.url,
+        status: error && error.response && error.response.status,
+        response: error && error.response && error.response.data,
       });
     } finally {
       setLoading(false);
@@ -124,12 +131,12 @@ export default function LoginScreen({ navigation }) {
       const details = buildErrorDetails(error, 'Login');
       Alert.alert(details.title, details.userMessage);
       console.error('Login error details:', {
-        code: error?.code,
-        message: error?.message,
-        baseURL: error?.config?.baseURL || api.defaults.baseURL,
-        endpoint: error?.config?.url,
-        status: error?.response?.status,
-        response: error?.response?.data,
+        code: error && error.code,
+        message: error && error.message,
+        baseURL: (error && error.config && error.config.baseURL) || api.defaults.baseURL,
+        endpoint: error && error.config && error.config.url,
+        status: error && error.response && error.response.status,
+        response: error && error.response && error.response.data,
       });
     } finally {
       setLoading(false);
