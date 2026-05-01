@@ -43,7 +43,8 @@
           "cameraPermission": "Allow MSU Attendance to access your camera for QR code scanning."
         }
       ],
-      "@react-native-community/datetimepicker"
+      "@react-native-community/datetimepicker",
+      "expo-font"
     ],
     "jsEngine": "jsc",
     "extra": {
