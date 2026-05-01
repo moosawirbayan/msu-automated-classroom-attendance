@@ -46,7 +46,7 @@
       "@react-native-community/datetimepicker",
       "expo-font"
     ],
-    "jsEngine": "jsc",
+    "jsEngine": "hermes",
     "extra": {
       "eas": {
         "projectId": "aee1aba0-1d6e-4bc0-a075-9cf935d0243a"
