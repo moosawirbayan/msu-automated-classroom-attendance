@@ -21,6 +21,10 @@ if ($notificationServiceAvailable) {
 $database = new Database();
 $db = $database->getConnection();
 
+// ✅ FIX: Force Manila timezone sa PHP at MySQL
+date_default_timezone_set('Asia/Manila');
+$db->exec("SET time_zone = '+08:00'");
+
 $data = json_decode(file_get_contents("php://input"));
 
 $studentDbId = $data->studentId ?? null;
@@ -64,33 +68,62 @@ try {
         exit();
     }
 
-    // Check if may existing attendance record ngayon (absent o present)
-    $today = (new DateTime('now', new DateTimeZone('Asia/Manila')))->format('Y-m-d');
+    // ✅ FIX: Kung may attendanceDate mula sa offline sync, gamitin iyon
+    // Para hindi mag-shift ng date kahit na-sync ng ibang araw
+    $attendanceDate = $data->attendanceDate ?? null;
+    if ($attendanceDate && preg_match('/^\d{4}-\d{2}-\d{2}$/', $attendanceDate)) {
+        $today = $attendanceDate; // ✅ Gamitin ang Manila date na galing sa offline queue
+    } else {
+        $today = (new DateTime('now', new DateTimeZone('Asia/Manila')))->format('Y-m-d'); // ✅ Manila time
+    }
+
+    // ✅ Check kung already marked na ngayong araw para sa same student + class
     $dupStmt = $db->prepare("SELECT id, status FROM attendance WHERE student_id = ? AND class_id = ? AND DATE(check_in_time) = ?");
     $dupStmt->execute([$studentDbId, $classId, $today]);
     $existing = $dupStmt->fetch(PDO::FETCH_ASSOC);
 
     if ($existing) {
         if ($existing['status'] === 'present') {
-            http_response_code(400);
-            echo json_encode(['success' => false, 'message' => 'Attendance already marked as present for today']);
+            // ✅ FIX: Ibalik ang success=true para sa offline sync
+            // para hindi siya mag-retry at mag-double pa
+            $nameParts = array_filter([
+                $student['first_name'],
+                $student['middle_initial'] ? $student['middle_initial'] . '.' : null,
+                $student['last_name'],
+            ]);
+            $fullName = implode(' ', $nameParts);
+
+            echo json_encode([
+                'success'        => true,
+                'message'        => 'Attendance already marked as present for today',
+                'student_name'   => $fullName,
+                'student_number' => $student['student_id'],
+                'attendance_id'  => $existing['id'],
+                'action'         => 'already_present',
+            ]);
             exit();
         }
 
+        // Kung absent ang existing record, i-update to present
         $updateStmt = $db->prepare("UPDATE attendance SET status = 'present', check_in_time = NOW() WHERE id = ?");
         $updateStmt->execute([$existing['id']]);
         $attendanceId = $existing['id'];
         $action = 'updated';
 
     } else {
+        // ✅ Bago — i-insert
         $markStmt = $db->prepare("INSERT INTO attendance (student_id, class_id, check_in_time, status) VALUES (?, ?, NOW(), 'present')");
         $markStmt->execute([$studentDbId, $classId]);
         $attendanceId = $db->lastInsertId();
         $action = 'inserted';
     }
 
-    $nameParts = array_filter([$student['first_name'], $student['middle_initial'] ? $student['middle_initial'].'.' : null, $student['last_name']]);
-    $fullName  = implode(' ', $nameParts);
+    $nameParts = array_filter([
+        $student['first_name'],
+        $student['middle_initial'] ? $student['middle_initial'] . '.' : null,
+        $student['last_name'],
+    ]);
+    $fullName = implode(' ', $nameParts);
 
     // Send email notification
     $notificationSent = false;
