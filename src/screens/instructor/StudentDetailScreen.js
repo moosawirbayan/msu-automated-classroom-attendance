@@ -410,7 +410,7 @@ export default function StudentDetailScreen({ route, navigation }) {
                 </View>
               </ViewShot>
 
-              <Text style={styles.qrLabel}>{fullName}</Text>
+              {/* ✅ REMOVED duplicate qrLabel name here */}
               <Text style={styles.qrSub}>Reusable in all classes for this student</Text>
 
               <TouchableOpacity
@@ -463,8 +463,8 @@ export default function StudentDetailScreen({ route, navigation }) {
                     >
                       <Ionicons name={icon} size={20} color={color} style={{ marginRight: 10 }} />
                       <View style={{ flex: 1 }}>
+                        {/* ✅ REMOVED histTime — date only, no time */}
                         <Text style={styles.histDate}>{rec.date_formatted}</Text>
-                        <Text style={styles.histTime}>{rec.time_in}</Text>
                       </View>
                       <View style={[styles.statusBadge, { backgroundColor: color + '20' }]}>
                         <Text style={[styles.statusBadgeText, { color }]}>
@@ -616,8 +616,7 @@ const styles = StyleSheet.create({
   qrNameBadge:{ marginTop: 12, alignItems: 'center', paddingHorizontal: 8 },
   qrNameText: { fontSize: 15, fontWeight: 'bold', color: COLORS.textPrimary, textAlign: 'center' },
   qrIdText:   { fontSize: 13, color: COLORS.textSecondary, marginTop: 2, textAlign: 'center' },
-  qrLabel:    { fontSize: 15, fontWeight: '600', color: COLORS.textPrimary, textAlign: 'center', marginTop: 12 },
-  qrSub:      { fontSize: 13, color: COLORS.textSecondary, textAlign: 'center', marginTop: 4 },
+  qrSub:      { fontSize: 13, color: COLORS.textSecondary, textAlign: 'center', marginTop: 12 },
 
   downloadQrButton: {
     marginTop: 12,
@@ -636,7 +635,6 @@ const styles = StyleSheet.create({
   histEven:         { backgroundColor: COLORS.background || '#f8f9fa' },
   histOdd:          { backgroundColor: '#fff' },
   histDate:         { fontSize: 14, fontWeight: '600', color: COLORS.textPrimary },
-  histTime:         { fontSize: 12, color: COLORS.textSecondary, marginTop: 1 },
   histEmpty:        { alignItems: 'center', paddingVertical: 24, opacity: 0.6 },
   histEmptyText:    { fontSize: 14, color: COLORS.gray, marginTop: 8 },
   statusBadge:      { paddingHorizontal: 10, paddingVertical: 3, borderRadius: 12 },
