@@ -60,9 +60,10 @@ try {
     $classesStmt->execute([$userId]);
     $classCount = $classesStmt->fetch(PDO::FETCH_ASSOC);
 
-    // ✅ Present today — PH time, enrolled students only
+    // ✅ FIXED: Present today — COUNT DISTINCT student_id para hindi mag-duplicate
+    // Kung enrolled ang student sa 2 classes at nag-scan sa dalawa, isa lang siya bilhin
     $presentStmt = $db->prepare("
-        SELECT COUNT(*) as total 
+        SELECT COUNT(DISTINCT a.student_id) as total 
         FROM attendance a 
         JOIN classes c ON a.class_id = c.id 
         JOIN enrollments e 
@@ -187,7 +188,7 @@ try {
             'attendanceRate'   => $attendanceRate,
             'recentAttendance' => $recentAttendance,
             'classBreakdown'   => $classBreakdown,
-            'activeClasses'    => $activeClasses,  // ✅ Bagong field
+            'activeClasses'    => $activeClasses,
         ]
     ]);
 
