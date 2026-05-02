@@ -15,19 +15,54 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
 import QRCode from 'react-native-qrcode-svg';
-import * as FileSystem from 'expo-file-system';
+import ViewShot from 'react-native-view-shot';
 import * as MediaLibrary from 'expo-media-library';
 import { COLORS } from '../../constants/colors';
 import api from '../../config/api';
 
+/* ─── Sub-components OUTSIDE main component (fixes keyboard closing) ─── */
+const InfoRow = ({ icon, label, value }) => (
+  <View style={styles.infoRow}>
+    <View style={styles.infoIcon}>
+      <Ionicons name={icon} size={20} color={COLORS.primary} />
+    </View>
+    <View style={styles.infoContent}>
+      <Text style={styles.infoLabel}>{label}</Text>
+      <Text style={styles.infoValue}>{value || '—'}</Text>
+    </View>
+  </View>
+);
+
+const EditField = ({ icon, label, field, placeholder, keyboardType = 'default', autoCapitalize = 'words', maxLength, form, setForm }) => (
+  <View style={styles.editRow}>
+    <View style={[styles.infoIcon, { marginTop: 4 }]}>
+      <Ionicons name={icon} size={20} color={COLORS.primary} />
+    </View>
+    <View style={styles.infoContent}>
+      <Text style={styles.infoLabel}>{label}</Text>
+      <TextInput
+        style={styles.editInput}
+        value={form[field]}
+        onChangeText={(text) => setForm((prev) => ({ ...prev, [field]: text }))}
+        placeholder={placeholder}
+        placeholderTextColor={COLORS.textSecondary}
+        keyboardType={keyboardType}
+        autoCapitalize={autoCapitalize}
+        maxLength={maxLength}
+      />
+    </View>
+  </View>
+);
+
 export default function StudentDetailScreen({ route, navigation }) {
   const { studentData: initialData, classData } = route.params;
-  const qrCodeRef = useRef(null);
+  const qrViewShotRef = useRef(null);
 
   const [studentData, setStudentData] = useState(initialData);
-  const [editing, setEditing] = useState(false);
-  const [saving, setSaving]   = useState(false);
-  const [history, setHistory]   = useState([]);
+  const [editing, setEditing]         = useState(false);
+  const [saving, setSaving]           = useState(false);
+  const [downloading, setDownloading] = useState(false);
+  const [history, setHistory]         = useState([]);
   const [histLoading, setHistLoading] = useState(false);
   const [form, setForm] = useState({
     student_id:     initialData.student_id     || '',
@@ -49,9 +84,19 @@ export default function StudentDetailScreen({ route, navigation }) {
     .filter(Boolean)
     .join(' ');
 
-  const attendanceRate = studentData.attendance_rate ?? 0;
+  const presentCount = histLoading
+    ? null
+    : history.filter(r => r.status === 'present' || r.status === 'late').length;
 
-  // Fetch per-date attendance history
+  const absentCount = histLoading
+    ? null
+    : history.filter(r => r.status === 'absent').length;
+
+  const totalFromHistory = histLoading ? 0 : (presentCount + absentCount);
+  const attendanceRate = !histLoading && totalFromHistory > 0
+    ? Math.round((presentCount / totalFromHistory) * 1000) / 10
+    : (studentData.attendance_rate ?? 0);
+
   useEffect(() => {
     if (!classData) return;
     setHistLoading(true);
@@ -60,7 +105,22 @@ export default function StudentDetailScreen({ route, navigation }) {
         headers: { Authorization: `Bearer ${token}` },
       })
     ).then(res => {
-      if (res.data.success) setHistory(res.data.records || []);
+      if (res.data.success) {
+        const records = res.data.records || [];
+        setHistory(records);
+
+        const p     = records.filter(r => r.status === 'present' || r.status === 'late').length;
+        const a     = records.filter(r => r.status === 'absent').length;
+        const total = p + a;
+        const rate  = total > 0 ? Math.round((p / total) * 1000) / 10 : 0;
+
+        setStudentData(prev => ({
+          ...prev,
+          present_count:   p,
+          absent_count:    a,
+          attendance_rate: rate,
+        }));
+      }
     }).catch(err => {
       console.error('History fetch error:', err);
     }).finally(() => setHistLoading(false));
@@ -159,77 +219,53 @@ export default function StudentDetailScreen({ route, navigation }) {
     }
   };
 
-  /* ─── Sub-components ─── */
-  const InfoRow = ({ icon, label, value }) => (
-    <View style={styles.infoRow}>
-      <View style={styles.infoIcon}>
-        <Ionicons name={icon} size={20} color={COLORS.primary} />
-      </View>
-      <View style={styles.infoContent}>
-        <Text style={styles.infoLabel}>{label}</Text>
-        <Text style={styles.infoValue}>{value || '—'}</Text>
-      </View>
-    </View>
-  );
-
-  const EditField = ({ icon, label, field, placeholder, keyboardType = 'default', autoCapitalize = 'words', maxLength }) => (
-    <View style={styles.editRow}>
-      <View style={[styles.infoIcon, { marginTop: 4 }]}>
-        <Ionicons name={icon} size={20} color={COLORS.primary} />
-      </View>
-      <View style={styles.infoContent}>
-        <Text style={styles.infoLabel}>{label}</Text>
-        <TextInput
-          style={styles.editInput}
-          value={form[field]}
-          onChangeText={(text) => setForm((prev) => ({ ...prev, [field]: text }))}
-          placeholder={placeholder}
-          placeholderTextColor={COLORS.textSecondary}
-          keyboardType={keyboardType}
-          autoCapitalize={autoCapitalize}
-          maxLength={maxLength}
-        />
-      </View>
-    </View>
-  );
-
-  const handleDownloadQr = async () => {
+  const doDownloadQr = async () => {
     if (Platform.OS === 'web') {
       Alert.alert('Not Supported', 'QR download is only available on mobile devices.');
       return;
     }
 
-    if (!qrCodeRef.current || !qrCodeRef.current.toDataURL) {
+    if (!qrViewShotRef.current) {
       Alert.alert('Error', 'QR code is not ready yet. Please try again.');
       return;
     }
 
+    setDownloading(true);
     try {
-      const permission = await MediaLibrary.requestPermissionsAsync();
-      if (!permission.granted) {
+      const { status } = await MediaLibrary.requestPermissionsAsync();
+      if (status !== 'granted') {
         Alert.alert('Permission Needed', 'Please allow media library access to save the QR code.');
         return;
       }
 
-      qrCodeRef.current.toDataURL(async (base64Data) => {
-        const fileUri = `${FileSystem.cacheDirectory}qr-${studentData.student_id}.png`;
-        await FileSystem.writeAsStringAsync(fileUri, base64Data, {
-          encoding: FileSystem.EncodingType.Base64,
-        });
+      const uri   = await qrViewShotRef.current.capture();
+      const asset = await MediaLibrary.createAssetAsync(uri);
+      await MediaLibrary.createAlbumAsync('MSU Attendance QR', asset, false).catch(() => null);
 
-        const asset = await MediaLibrary.createAssetAsync(fileUri);
-        await MediaLibrary.createAlbumAsync('MSU Attendance QR', asset, false).catch(() => null);
-        Alert.alert('Saved', 'Student QR code has been saved to your gallery.');
-      });
+      Alert.alert('Saved! ✅', `QR code for ${fullName} has been saved to your gallery.`);
     } catch (error) {
       console.error('Download QR error:', error);
       Alert.alert('Error', 'Failed to save QR code. Please try again.');
+    } finally {
+      setDownloading(false);
     }
+  };
+
+  const handleDownloadQr = () => {
+    Alert.alert(
+      'Download QR Code',
+      `Do you want to download the QR code for ${fullName}?`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        { text: 'Download', style: 'default', onPress: doDownloadQr },
+      ],
+      { cancelable: true }
+    );
   };
 
   return (
     <View style={styles.container}>
-      {/* Header */}
+      {/* ── Header ── */}
       <LinearGradient colors={[COLORS.primary, COLORS.primaryDark]} style={styles.header}>
         <View style={styles.headerContent}>
           <TouchableOpacity
@@ -268,7 +304,7 @@ export default function StudentDetailScreen({ route, navigation }) {
           )}
         </View>
 
-        {/* Avatar + Name (always shows saved data) */}
+        {/* Avatar + Name */}
         <View style={styles.avatarSection}>
           <View style={styles.avatarCircle}>
             <Ionicons name="person" size={40} color={COLORS.primary} />
@@ -295,13 +331,13 @@ export default function StudentDetailScreen({ route, navigation }) {
           keyboardShouldPersistTaps="handled"
           contentContainerStyle={{ paddingBottom: 40 }}
         >
-          {/* Attendance stats — view mode only */}
+          {/* ── Attendance stats — view mode only ── */}
           {!editing && (
             <>
               <View style={styles.rateCard}>
                 <Text style={styles.rateLabel}>Attendance Rate</Text>
                 <Text style={[styles.rateValue, { color: getAttendanceColor(attendanceRate) }]}>
-                  {attendanceRate}%
+                  {histLoading ? '—' : `${attendanceRate}%`}
                 </Text>
                 <View style={styles.rateBarBg}>
                   <View
@@ -319,63 +355,81 @@ export default function StudentDetailScreen({ route, navigation }) {
               <View style={styles.statsRow}>
                 <View style={[styles.statCard, { borderColor: COLORS.success }]}>
                   <Ionicons name="checkmark-circle" size={28} color={COLORS.success} />
-                  <Text style={[styles.statNum, { color: COLORS.success }]}>{studentData.present_count ?? 0}</Text>
+                  <Text style={[styles.statNum, { color: COLORS.success }]}>
+                    {histLoading ? '—' : presentCount}
+                  </Text>
                   <Text style={styles.statLbl}>Present</Text>
                 </View>
                 <View style={[styles.statCard, { borderColor: COLORS.error }]}>
                   <Ionicons name="close-circle" size={28} color={COLORS.error} />
-                  <Text style={[styles.statNum, { color: COLORS.error }]}>{studentData.absent_count ?? 0}</Text>
+                  <Text style={[styles.statNum, { color: COLORS.error }]}>
+                    {histLoading ? '—' : absentCount}
+                  </Text>
                   <Text style={styles.statLbl}>Absent</Text>
-                </View>
-                <View style={[styles.statCard, { borderColor: COLORS.warning }]}>
-                  <Ionicons name="time" size={28} color={COLORS.warning} />
-                  <Text style={[styles.statNum, { color: COLORS.warning }]}>{studentData.late_count ?? 0}</Text>
-                  <Text style={styles.statLbl}>Late</Text>
                 </View>
               </View>
             </>
           )}
 
-          {/* Personal Info — View Mode */}
+          {/* ── Personal Info — View Mode ── */}
           {!editing && (
             <View style={styles.section}>
               <Text style={styles.sectionTitle}>Personal Information</Text>
-              <InfoRow icon="id-card-outline" label="Student ID"    value={studentData.student_id} />
-              <InfoRow icon="person-outline"  label="Full Name"     value={fullName} />
-              <InfoRow icon="school-outline" label="Program" value={studentData.program} />
-              <InfoRow icon="mail-outline"    label="Email"         value={studentData.email} />
-              <InfoRow icon="person-circle-outline" label="Parent/Guardian" value={studentData.parent_name} />
-              <InfoRow icon="mail-open-outline" label="Parent Email" value={studentData.parent_email} />
-              <InfoRow icon="call-outline"    label="Mobile Number" value={studentData.phone} />
+              <InfoRow icon="id-card-outline"       label="Student ID"       value={studentData.student_id} />
+              <InfoRow icon="person-outline"         label="Full Name"        value={fullName} />
+              <InfoRow icon="school-outline"         label="Program"          value={studentData.program} />
+              <InfoRow icon="mail-outline"           label="Email"            value={studentData.email} />
+              <InfoRow icon="person-circle-outline"  label="Parent/Guardian"  value={studentData.parent_name} />
+              <InfoRow icon="mail-open-outline"      label="Parent Email"     value={studentData.parent_email} />
+              <InfoRow icon="call-outline"           label="Mobile Number"    value={studentData.phone} />
             </View>
           )}
 
-          {/* QR Code — View Mode */}
+          {/* ── QR Code — View Mode ── */}
           {!editing && classData && (
             <View style={styles.section}>
               <Text style={styles.sectionTitle}>Attendance QR Code</Text>
               <Text style={styles.qrHint}>Instructor scans this to mark attendance</Text>
-              <View style={styles.qrContainer}>
-                <QRCode
-                  value={`${studentData.id}|${studentData.student_id}|${fullName}`}
-                  size={200}
-                  color={COLORS.textPrimary}
-                  backgroundColor={COLORS.white}
-                  getRef={(ref) => {
-                    qrCodeRef.current = ref;
-                  }}
-                />
-              </View>
+
+              <ViewShot
+                ref={qrViewShotRef}
+                options={{ format: 'png', quality: 1 }}
+                style={styles.qrShot}
+              >
+                <View style={styles.qrContainer}>
+                  <QRCode
+                    value={`${studentData.id}|${studentData.student_id}|${fullName}`}
+                    size={200}
+                    color={COLORS.textPrimary}
+                    backgroundColor={COLORS.white}
+                  />
+                  <View style={styles.qrNameBadge}>
+                    <Text style={styles.qrNameText}>{fullName}</Text>
+                    <Text style={styles.qrIdText}>ID: {studentData.student_id}</Text>
+                  </View>
+                </View>
+              </ViewShot>
+
               <Text style={styles.qrLabel}>{fullName}</Text>
               <Text style={styles.qrSub}>Reusable in all classes for this student</Text>
-              <TouchableOpacity style={styles.downloadQrButton} onPress={handleDownloadQr}>
-                <Ionicons name="download-outline" size={18} color={COLORS.white} />
-                <Text style={styles.downloadQrButtonText}>Download QR</Text>
+
+              <TouchableOpacity
+                style={[styles.downloadQrButton, downloading && { opacity: 0.7 }]}
+                onPress={handleDownloadQr}
+                disabled={downloading}
+              >
+                {downloading
+                  ? <ActivityIndicator size="small" color={COLORS.white} />
+                  : <Ionicons name="download-outline" size={18} color={COLORS.white} />
+                }
+                <Text style={styles.downloadQrButtonText}>
+                  {downloading ? 'Saving...' : 'Download QR'}
+                </Text>
               </TouchableOpacity>
             </View>
           )}
 
-          {/* Attendance History — View Mode */}
+          {/* ── Attendance History — View Mode ── */}
           {!editing && classData && (
             <View style={styles.section}>
               <Text style={styles.sectionTitle}>Attendance History</Text>
@@ -388,15 +442,25 @@ export default function StudentDetailScreen({ route, navigation }) {
                 </View>
               ) : (
                 history.map((rec, idx) => {
-                  const statusColors = { present: COLORS.success, absent: COLORS.error, late: '#f59e0b', excused: COLORS.info };
-                  const statusIcons  = { present: 'checkmark-circle', absent: 'close-circle', late: 'time', excused: 'information-circle' };
+                  const statusColors = {
+                    present: COLORS.success,
+                    absent:  COLORS.error,
+                    late:    '#f59e0b',
+                    excused: COLORS.info,
+                  };
+                  const statusIcons = {
+                    present: 'checkmark-circle',
+                    absent:  'close-circle',
+                    late:    'time',
+                    excused: 'information-circle',
+                  };
                   const color = statusColors[rec.status] || COLORS.gray;
                   const icon  = statusIcons[rec.status]  || 'ellipse';
                   return (
-                    <View key={idx} style={[
-                      styles.histRow,
-                      idx % 2 === 0 ? styles.histEven : styles.histOdd,
-                    ]}>
+                    <View
+                      key={idx}
+                      style={[styles.histRow, idx % 2 === 0 ? styles.histEven : styles.histOdd]}
+                    >
                       <Ionicons name={icon} size={20} color={color} style={{ marginRight: 10 }} />
                       <View style={{ flex: 1 }}>
                         <Text style={styles.histDate}>{rec.date_formatted}</Text>
@@ -414,7 +478,7 @@ export default function StudentDetailScreen({ route, navigation }) {
             </View>
           )}
 
-          {/* Personal Info — Edit Mode */}
+          {/* ── Personal Info — Edit Mode ── */}
           {editing && (
             <View style={styles.section}>
               <Text style={styles.sectionTitle}>Edit Information</Text>
@@ -425,9 +489,10 @@ export default function StudentDetailScreen({ route, navigation }) {
                 field="student_id"
                 placeholder="e.g. 2025-001"
                 autoCapitalize="none"
+                form={form}
+                setForm={setForm}
               />
 
-              {/* Name row: First + M.I. + Last */}
               <View style={styles.nameEditRow}>
                 <View style={{ flex: 2 }}>
                   <Text style={styles.infoLabel}>First Name *</Text>
@@ -465,54 +530,28 @@ export default function StudentDetailScreen({ route, navigation }) {
                 </View>
               </View>
 
-              <EditField
-                icon="mail-outline"
-                label="Email Address"
-                field="email"
-                placeholder="student@example.com (optional)"
-                keyboardType="email-address"
-                autoCapitalize="none"
-              />
-              <EditField
-                icon="school-outline"
-                label="Program *"
-                field="program"
-                placeholder="e.g. BS Computer Science"
-              />
-              <EditField
-                icon="person-circle-outline"
-                label="Parent/Guardian Name"
-                field="parent_name"
-                placeholder="Parent/Guardian full name"
-              />
-              <EditField
-                icon="mail-open-outline"
-                label="Parent/Guardian Email"
-                field="parent_email"
-                placeholder="parent@example.com"
-                keyboardType="email-address"
-                autoCapitalize="none"
-              />
-              <EditField
-                icon="call-outline"
-                label="Mobile Number"
-                field="phone"
-                placeholder="+63 912 345 6789"
-                keyboardType="phone-pad"
-                autoCapitalize="none"
-              />
+              <EditField icon="mail-outline"          label="Email Address"         field="email"        placeholder="student@example.com (optional)" keyboardType="email-address" autoCapitalize="none" form={form} setForm={setForm} />
+              <EditField icon="school-outline"        label="Program *"             field="program"      placeholder="e.g. BS Computer Science" form={form} setForm={setForm} />
+              <EditField icon="person-circle-outline" label="Parent/Guardian Name"  field="parent_name"  placeholder="Parent/Guardian full name" form={form} setForm={setForm} />
+              <EditField icon="mail-open-outline"     label="Parent/Guardian Email" field="parent_email" placeholder="parent@example.com" keyboardType="email-address" autoCapitalize="none" form={form} setForm={setForm} />
+              <EditField icon="call-outline"          label="Mobile Number"         field="phone"        placeholder="+63 912 345 6789" keyboardType="phone-pad" autoCapitalize="none" form={form} setForm={setForm} />
 
               <View style={styles.actionButtons}>
                 <TouchableOpacity style={styles.cancelBtn} onPress={handleCancel} disabled={saving}>
                   <Text style={styles.cancelBtnText}>Cancel</Text>
                 </TouchableOpacity>
-                <TouchableOpacity style={[styles.saveButton, saving && { opacity: 0.6 }]} onPress={handleSave} disabled={saving}>
+                <TouchableOpacity
+                  style={[styles.saveButton, saving && { opacity: 0.6 }]}
+                  onPress={handleSave}
+                  disabled={saving}
+                >
                   {saving
                     ? <ActivityIndicator color={COLORS.white} />
                     : <>
                         <Ionicons name="checkmark-circle" size={20} color={COLORS.white} />
                         <Text style={styles.saveBtnText}>Save Changes</Text>
-                      </>}
+                      </>
+                  }
                 </TouchableOpacity>
               </View>
             </View>
@@ -524,162 +563,62 @@ export default function StudentDetailScreen({ route, navigation }) {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: COLORS.background },
-  header: { paddingTop: 50, paddingBottom: 24, paddingHorizontal: 20 },
-  headerContent: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    marginBottom: 16,
-  },
-  backButton: { padding: 8 },
-  headerTitle: { fontSize: 20, fontWeight: 'bold', color: COLORS.white },
-  headerActions: { flexDirection: 'row', alignItems: 'center' },
-  headerBtn: { padding: 8 },
-  saveBtn: {
-    backgroundColor: 'rgba(255,255,255,0.25)',
-    borderRadius: 8,
-    marginLeft: 4,
-  },
-  avatarSection: { alignItems: 'center' },
-  avatarCircle: {
-    width: 88,
-    height: 88,
-    borderRadius: 44,
-    backgroundColor: COLORS.white,
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginBottom: 12,
-  },
-  studentName: { fontSize: 22, fontWeight: 'bold', color: COLORS.white, textAlign: 'center' },
-  studentIdText: { fontSize: 14, color: COLORS.white, opacity: 0.85, marginTop: 4 },
-  classBadge: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: 'rgba(255,255,255,0.25)',
-    borderRadius: 20,
-    paddingHorizontal: 12,
-    paddingVertical: 4,
-    marginTop: 8,
-  },
+  container:      { flex: 1, backgroundColor: COLORS.background },
+  header:         { paddingTop: 50, paddingBottom: 24, paddingHorizontal: 20 },
+  headerContent:  { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 },
+  backButton:     { padding: 8 },
+  headerTitle:    { fontSize: 20, fontWeight: 'bold', color: COLORS.white },
+  headerActions:  { flexDirection: 'row', alignItems: 'center' },
+  headerBtn:      { padding: 8 },
+  saveBtn:        { backgroundColor: 'rgba(255,255,255,0.25)', borderRadius: 8, marginLeft: 4 },
+
+  avatarSection:  { alignItems: 'center' },
+  avatarCircle:   { width: 88, height: 88, borderRadius: 44, backgroundColor: COLORS.white, justifyContent: 'center', alignItems: 'center', marginBottom: 12 },
+  studentName:    { fontSize: 22, fontWeight: 'bold', color: COLORS.white, textAlign: 'center' },
+  studentIdText:  { fontSize: 14, color: COLORS.white, opacity: 0.85, marginTop: 4 },
+  classBadge:     { flexDirection: 'row', alignItems: 'center', backgroundColor: 'rgba(255,255,255,0.25)', borderRadius: 20, paddingHorizontal: 12, paddingVertical: 4, marginTop: 8 },
   classBadgeText: { fontSize: 13, color: COLORS.white, marginLeft: 6, fontWeight: '500' },
+
   content: { flex: 1, padding: 16 },
-  rateCard: {
-    backgroundColor: COLORS.white,
-    borderRadius: 16,
-    padding: 20,
-    marginBottom: 12,
-    alignItems: 'center',
-    elevation: 2,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.1,
-    shadowRadius: 2,
-  },
-  rateLabel: { fontSize: 14, color: COLORS.textSecondary, marginBottom: 6 },
-  rateValue: { fontSize: 42, fontWeight: 'bold', marginBottom: 12 },
-  rateBarBg: { width: '100%', height: 10, backgroundColor: COLORS.grayLight, borderRadius: 5, overflow: 'hidden' },
+
+  rateCard:    { backgroundColor: COLORS.white, borderRadius: 16, padding: 20, marginBottom: 12, alignItems: 'center', elevation: 2, shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.1, shadowRadius: 2 },
+  rateLabel:   { fontSize: 14, color: COLORS.textSecondary, marginBottom: 6 },
+  rateValue:   { fontSize: 42, fontWeight: 'bold', marginBottom: 12 },
+  rateBarBg:   { width: '100%', height: 10, backgroundColor: COLORS.grayLight, borderRadius: 5, overflow: 'hidden' },
   rateBarFill: { height: '100%', borderRadius: 5 },
+
   statsRow: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 12 },
-  statCard: {
-    flex: 1,
-    backgroundColor: COLORS.white,
-    borderRadius: 12,
-    padding: 14,
-    alignItems: 'center',
-    marginHorizontal: 4,
-    borderTopWidth: 3,
-    elevation: 2,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.08,
-    shadowRadius: 2,
-  },
-  statNum: { fontSize: 24, fontWeight: 'bold', marginTop: 6 },
-  statLbl: { fontSize: 12, color: COLORS.textSecondary, marginTop: 2 },
-  section: {
-    backgroundColor: COLORS.white,
-    borderRadius: 16,
-    padding: 20,
-    marginBottom: 20,
-    elevation: 2,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.1,
-    shadowRadius: 2,
-  },
+  statCard: { flex: 1, backgroundColor: COLORS.white, borderRadius: 12, padding: 14, alignItems: 'center', marginHorizontal: 4, borderTopWidth: 3, elevation: 2, shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.08, shadowRadius: 2 },
+  statNum:  { fontSize: 24, fontWeight: 'bold', marginTop: 6 },
+  statLbl:  { fontSize: 12, color: COLORS.textSecondary, marginTop: 2 },
+
+  section:      { backgroundColor: COLORS.white, borderRadius: 16, padding: 20, marginBottom: 20, elevation: 2, shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.1, shadowRadius: 2 },
   sectionTitle: { fontSize: 16, fontWeight: 'bold', color: COLORS.textPrimary, marginBottom: 16 },
-  infoRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingVertical: 12,
-    borderBottomWidth: 1,
-    borderBottomColor: COLORS.border,
-  },
-  editRow: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    paddingVertical: 8,
-    borderBottomWidth: 1,
-    borderBottomColor: COLORS.border,
-  },
-  infoIcon: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    backgroundColor: COLORS.grayLight,
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginRight: 14,
-  },
-  infoContent: { flex: 1 },
-  infoLabel: { fontSize: 12, color: COLORS.textSecondary, marginBottom: 4 },
-  infoValue: { fontSize: 15, color: COLORS.textPrimary, fontWeight: '500' },
-  editInput: {
-    borderWidth: 1,
-    borderColor: COLORS.border,
-    borderRadius: 8,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    fontSize: 15,
-    color: COLORS.textPrimary,
-    backgroundColor: COLORS.background,
-    marginBottom: 4,
-  },
-  nameEditRow: {
-    flexDirection: 'row',
-    paddingVertical: 8,
-    borderBottomWidth: 1,
-    borderBottomColor: COLORS.border,
-    marginBottom: 4,
-  },
+
+  infoRow:    { flexDirection: 'row', alignItems: 'center', paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: COLORS.border },
+  editRow:    { flexDirection: 'row', alignItems: 'flex-start', paddingVertical: 8, borderBottomWidth: 1, borderBottomColor: COLORS.border },
+  infoIcon:   { width: 36, height: 36, borderRadius: 18, backgroundColor: COLORS.grayLight, justifyContent: 'center', alignItems: 'center', marginRight: 14 },
+  infoContent:{ flex: 1 },
+  infoLabel:  { fontSize: 12, color: COLORS.textSecondary, marginBottom: 4 },
+  infoValue:  { fontSize: 15, color: COLORS.textPrimary, fontWeight: '500' },
+  editInput:  { borderWidth: 1, borderColor: COLORS.border, borderRadius: 8, paddingHorizontal: 12, paddingVertical: 10, fontSize: 15, color: COLORS.textPrimary, backgroundColor: COLORS.background, marginBottom: 4 },
+  nameEditRow:{ flexDirection: 'row', paddingVertical: 8, borderBottomWidth: 1, borderBottomColor: COLORS.border, marginBottom: 4 },
+
   actionButtons: { flexDirection: 'row', marginTop: 20 },
-  cancelBtn: {
-    flex: 1,
-    paddingVertical: 14,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: COLORS.border,
-    marginRight: 8,
-    alignItems: 'center',
-  },
+  cancelBtn:     { flex: 1, paddingVertical: 14, borderRadius: 12, borderWidth: 1, borderColor: COLORS.border, marginRight: 8, alignItems: 'center' },
   cancelBtnText: { fontSize: 15, fontWeight: '600', color: COLORS.textSecondary },
-  saveButton: {
-    flex: 2,
-    flexDirection: 'row',
-    paddingVertical: 14,
-    borderRadius: 12,
-    backgroundColor: COLORS.primary,
-    marginLeft: 8,
-    alignItems: 'center',
-    justifyContent: 'center',
-    elevation: 2,
-  },
-  saveBtnText: { fontSize: 15, fontWeight: 'bold', color: COLORS.white, marginLeft: 8 },
-  qrHint: { fontSize: 13, color: COLORS.textSecondary, marginBottom: 16, textAlign: 'center' },
-  qrContainer: { alignItems: 'center', paddingVertical: 16 },
-  qrLabel: { fontSize: 15, fontWeight: '600', color: COLORS.textPrimary, textAlign: 'center', marginTop: 12 },
-  qrSub: { fontSize: 13, color: COLORS.textSecondary, textAlign: 'center', marginTop: 4 },
+  saveButton:    { flex: 2, flexDirection: 'row', paddingVertical: 14, borderRadius: 12, backgroundColor: COLORS.primary, marginLeft: 8, alignItems: 'center', justifyContent: 'center', elevation: 2 },
+  saveBtnText:   { fontSize: 15, fontWeight: 'bold', color: COLORS.white, marginLeft: 8 },
+
+  qrHint:     { fontSize: 13, color: COLORS.textSecondary, marginBottom: 16, textAlign: 'center' },
+  qrShot:     { alignSelf: 'center', backgroundColor: COLORS.white, padding: 16, borderRadius: 12 },
+  qrContainer:{ alignItems: 'center' },
+  qrNameBadge:{ marginTop: 12, alignItems: 'center', paddingHorizontal: 8 },
+  qrNameText: { fontSize: 15, fontWeight: 'bold', color: COLORS.textPrimary, textAlign: 'center' },
+  qrIdText:   { fontSize: 13, color: COLORS.textSecondary, marginTop: 2, textAlign: 'center' },
+  qrLabel:    { fontSize: 15, fontWeight: '600', color: COLORS.textPrimary, textAlign: 'center', marginTop: 12 },
+  qrSub:      { fontSize: 13, color: COLORS.textSecondary, textAlign: 'center', marginTop: 4 },
+
   downloadQrButton: {
     marginTop: 12,
     flexDirection: 'row',
@@ -689,22 +628,17 @@ const styles = StyleSheet.create({
     borderRadius: 8,
     paddingHorizontal: 14,
     paddingVertical: 10,
+    gap: 6,
   },
-  downloadQrButtonText: {
-    color: COLORS.white,
-    fontSize: 13,
-    fontWeight: '600',
-    marginLeft: 6,
-  },
+  downloadQrButtonText: { color: COLORS.white, fontSize: 13, fontWeight: '600' },
 
-  // Attendance history
-  histRow: { flexDirection: 'row', alignItems: 'center', paddingVertical: 10, paddingHorizontal: 8, borderRadius: 8, marginBottom: 4 },
-  histEven: { backgroundColor: COLORS.background || '#f8f9fa' },
-  histOdd:  { backgroundColor: '#fff' },
-  histDate: { fontSize: 14, fontWeight: '600', color: COLORS.textPrimary },
-  histTime: { fontSize: 12, color: COLORS.textSecondary, marginTop: 1 },
-  histEmpty: { alignItems: 'center', paddingVertical: 24, opacity: 0.6 },
-  histEmptyText: { fontSize: 14, color: COLORS.gray, marginTop: 8 },
-  statusBadge: { paddingHorizontal: 10, paddingVertical: 3, borderRadius: 12 },
-  statusBadgeText: { fontSize: 12, fontWeight: '700', textTransform: 'capitalize' },
+  histRow:          { flexDirection: 'row', alignItems: 'center', paddingVertical: 10, paddingHorizontal: 8, borderRadius: 8, marginBottom: 4 },
+  histEven:         { backgroundColor: COLORS.background || '#f8f9fa' },
+  histOdd:          { backgroundColor: '#fff' },
+  histDate:         { fontSize: 14, fontWeight: '600', color: COLORS.textPrimary },
+  histTime:         { fontSize: 12, color: COLORS.textSecondary, marginTop: 1 },
+  histEmpty:        { alignItems: 'center', paddingVertical: 24, opacity: 0.6 },
+  histEmptyText:    { fontSize: 14, color: COLORS.gray, marginTop: 8 },
+  statusBadge:      { paddingHorizontal: 10, paddingVertical: 3, borderRadius: 12 },
+  statusBadgeText:  { fontSize: 12, fontWeight: '700', textTransform: 'capitalize' },
 });

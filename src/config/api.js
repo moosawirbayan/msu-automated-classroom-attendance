@@ -1,10 +1,12 @@
 import axios from 'axios';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
-// Backend: run  php -S 0.0.0.0:8000  inside the /backend folder
-// Web (same machine):  http://localhost:8000/
-// Physical device / Expo Go on phone: use your machine's LAN IP (ipconfig), e.g. http://192.168.0.31:8000/
-export const API_BASE_URL = 'http://192.168.0.31:8000/'; // default fallback
+// ENV Switch: "local" = Laragon, "production" = Render.com
+const ENV = "production";
+
+export const API_BASE_URL = ENV === "local"
+  ? "http://192.168.102.229:8000"           // Laragon (local development)
+  : "https://msu-attendance-backend.onrender.com"; // Render.com (production)
 
 // Create axios instance with default config
 const api = axios.create({

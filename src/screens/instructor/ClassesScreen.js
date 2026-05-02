@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   View,
   Text,
@@ -17,6 +17,96 @@ import { Ionicons } from '@expo/vector-icons';
 import { COLORS } from '../../constants/colors';
 import api from '../../config/api';
 
+// ─────────────────────────────────────────────
+// Helper: Parse "HH:MM:SS" or "HH:MM" → { hours, minutes }
+// ─────────────────────────────────────────────
+const parseTime = (timeString) => {
+  if (!timeString) return null;
+  const parts = timeString.split(':');
+  return {
+    hours: parseInt(parts[0], 10),
+    minutes: parseInt(parts[1], 10),
+  };
+};
+
+// ─────────────────────────────────────────────
+// Helper: Get current time as { hours, minutes }
+// ─────────────────────────────────────────────
+const getCurrentTime = () => {
+  const now = new Date();
+  return { hours: now.getHours(), minutes: now.getMinutes() };
+};
+
+// ─────────────────────────────────────────────
+// Helper: Convert time object to total minutes
+// ─────────────────────────────────────────────
+const toMinutes = ({ hours, minutes }) => hours * 60 + minutes;
+
+// ─────────────────────────────────────────────
+// Helper: Check if today matches class schedule days
+// ─────────────────────────────────────────────
+const isTodayScheduled = (daysString) => {
+  if (!daysString) return false;
+
+  const dayMap = {
+    sun: 0, sunday: 0,
+    mon: 1, monday: 1,
+    tue: 2, tuesday: 2,
+    wed: 3, wednesday: 3,
+    thu: 4, thursday: 4,
+    fri: 5, friday: 5,
+    sat: 6, saturday: 6,
+  };
+
+  const todayIndex = new Date().getDay();
+
+  const scheduledDays = daysString
+    .split(',')
+    .map((d) => d.trim().toLowerCase());
+
+  return scheduledDays.some((d) => dayMap[d] === todayIndex);
+};
+
+// ─────────────────────────────────────────────
+// Helper: Determine if class SHOULD be active right now
+// Returns: 'active' | 'inactive'
+// ─────────────────────────────────────────────
+const computeDesiredActiveState = (classData) => {
+  if (!isTodayScheduled(classData.days)) return 'inactive';
+
+  const start = parseTime(classData.start_time);
+  const end = parseTime(classData.end_time);
+  if (!start || !end) return 'inactive';
+
+  const nowMinutes = toMinutes(getCurrentTime());
+  const startMinutes = toMinutes(start);
+  const endMinutes = toMinutes(end);
+
+  if (nowMinutes >= startMinutes && nowMinutes < endMinutes) {
+    return 'active';
+  }
+  return 'inactive';
+};
+
+// ─────────────────────────────────────────────
+// Helper: Check if class has ended today
+// Returns true kapag: scheduled today AND past end_time na
+// ─────────────────────────────────────────────
+const hasClassEndedToday = (classData) => {
+  if (!isTodayScheduled(classData.days)) return false;
+
+  const end = parseTime(classData.end_time);
+  if (!end) return false;
+
+  const nowMinutes = toMinutes(getCurrentTime());
+  const endMinutes = toMinutes(end);
+
+  return nowMinutes >= endMinutes;
+};
+
+// ─────────────────────────────────────────────
+// MAIN SCREEN
+// ─────────────────────────────────────────────
 export default function ClassesScreen({ navigation }) {
   const [searchQuery, setSearchQuery] = useState('');
   const [classes, setClasses] = useState([]);
@@ -27,9 +117,9 @@ export default function ClassesScreen({ navigation }) {
     try {
       const token = await AsyncStorage.getItem('authToken');
       const response = await api.get('/classes/index.php', {
-        headers: { Authorization: `Bearer ${token}` }
+        headers: { Authorization: `Bearer ${token}` },
       });
-      
+
       if (response.data.success) {
         setClasses(response.data.data);
       }
@@ -63,20 +153,21 @@ export default function ClassesScreen({ navigation }) {
           try {
             const token = await AsyncStorage.getItem('authToken');
             await api.delete(`/classes/index.php?id=${classId}`, {
-              headers: { Authorization: `Bearer ${token}` }
+              headers: { Authorization: `Bearer ${token}` },
             });
             fetchClasses();
           } catch (error) {
             Alert.alert('Error', 'Failed to delete class');
           }
-        }
-      }
+        },
+      },
     ]);
   };
 
-  const filteredClasses = classes.filter((cls) =>
-    cls.class_name?.toLowerCase().includes(searchQuery.toLowerCase()) ||
-    cls.class_code?.toLowerCase().includes(searchQuery.toLowerCase())
+  const filteredClasses = classes.filter(
+    (cls) =>
+      cls.class_name?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      cls.class_code?.toLowerCase().includes(searchQuery.toLowerCase())
   );
 
   if (loading) {
@@ -116,23 +207,30 @@ export default function ClassesScreen({ navigation }) {
         </View>
 
         {/* Add Class Button */}
-        <TouchableOpacity style={styles.addButton} onPress={() => navigation.navigate('AddClass')}>
+        <TouchableOpacity
+          style={styles.addButton}
+          onPress={() => navigation.navigate('AddClass')}
+        >
           <Ionicons name="add-circle" size={24} color={COLORS.white} />
           <Text style={styles.addButtonText}>Add New Class</Text>
         </TouchableOpacity>
 
         {/* Classes List */}
-        <ScrollView 
+        <ScrollView
           style={styles.classList}
           showsVerticalScrollIndicator={false}
           refreshControl={
-            <RefreshControl refreshing={refreshing} onRefresh={onRefresh} colors={[COLORS.primary]} />
+            <RefreshControl
+              refreshing={refreshing}
+              onRefresh={onRefresh}
+              colors={[COLORS.primary]}
+            />
           }
         >
           {filteredClasses.map((cls) => (
-            <ClassCard 
-              key={cls.id} 
-              classData={cls} 
+            <ClassCard
+              key={cls.id}
+              classData={cls}
               onDelete={() => handleDeleteClass(cls.id)}
               onRefresh={fetchClasses}
               navigation={navigation}
@@ -151,27 +249,122 @@ export default function ClassesScreen({ navigation }) {
   );
 }
 
+// ─────────────────────────────────────────────
+// CLASS CARD (with auto-activate/deactivate + auto-absent logic)
+// ─────────────────────────────────────────────
 const ClassCard = ({ classData, onDelete, onRefresh, navigation }) => {
   const [isActive, setIsActive] = useState(Boolean(Number(classData.is_active)));
-  const [notifyParents, setNotifyParents] = useState(Boolean(Number(classData.notify_parents ?? 1)));
+  const [notifyParents, setNotifyParents] = useState(
+    Boolean(Number(classData.notify_parents ?? 1))
+  );
   const [updating, setUpdating] = useState(false);
 
+  // Track the last state we already pushed to the API to avoid duplicate calls
+  const lastPushedState = useRef(null);
+  // Track if teacher manually overrode within the current class window
+  const manualOverride = useRef(false);
+  // ✅ Track if auto-absent was already triggered today for this class
+  // Key: "classId_YYYY-MM-DD" para reset sa susunod na araw
+  const autoAbsentTriggered = useRef(null);
+
+  // ── Auto-activate / deactivate + auto-absent logic ───
+  useEffect(() => {
+    const checkAndToggle = async () => {
+      const desired = computeDesiredActiveState(classData);
+      const shouldBeActive = desired === 'active';
+
+      // If teacher manually overrode, respect it ONLY within the current window.
+      // Once the window changes (e.g. class ends), clear the override.
+      if (manualOverride.current) {
+        const currentDesired = desired;
+        if (lastPushedState.current !== null && currentDesired !== lastPushedState.current) {
+          manualOverride.current = false;
+        } else {
+          return; // Still in same window — respect manual override
+        }
+      }
+
+      // ✅ AUTO-ABSENT CHECK
+      // Triggered kapag: scheduled today + past end_time + hindi pa na-trigger ngayon
+      const todayKey = `${classData.id}_${new Date().toISOString().split('T')[0]}`;
+      const classEnded = hasClassEndedToday(classData);
+
+      if (classEnded && autoAbsentTriggered.current !== todayKey) {
+        autoAbsentTriggered.current = todayKey; // I-mark agad para hindi mag-double trigger
+
+        try {
+          const token = await AsyncStorage.getItem('authToken');
+          const absentRes = await api.post(
+            '/attendance/mark_auto_absent.php',
+            { class_id: classData.id },
+            { headers: { Authorization: `Bearer ${token}` } }
+          );
+
+          if (absentRes.data?.marked > 0) {
+            console.log(
+              `✅ Auto-absent: ${absentRes.data.marked} student(s) marked absent for class ${classData.id}`
+            );
+          }
+        } catch (absentErr) {
+          // Non-blocking — i-reset ang trigger key para masubukan ulit sa susunod
+          console.error('Auto-absent error:', absentErr);
+          autoAbsentTriggered.current = null;
+        }
+      }
+
+      // Skip active/inactive API call if we already pushed this exact state
+      if (lastPushedState.current === shouldBeActive) return;
+
+      // Update local UI immediately
+      setIsActive(shouldBeActive);
+      lastPushedState.current = shouldBeActive;
+
+      try {
+        const token = await AsyncStorage.getItem('authToken');
+        await api.put(
+          '/classes/index.php',
+          { id: classData.id, is_active: shouldBeActive },
+          { headers: { Authorization: `Bearer ${token}` } }
+        );
+        if (onRefresh) onRefresh();
+      } catch (error) {
+        console.error('Auto-toggle error:', error);
+        setIsActive(!shouldBeActive);
+        lastPushedState.current = null;
+      }
+    };
+
+    // Run immediately on mount
+    checkAndToggle();
+
+    // Check every 30 seconds
+    const interval = setInterval(checkAndToggle, 30 * 1000);
+
+    return () => clearInterval(interval);
+  }, [classData.id, classData.days, classData.start_time, classData.end_time]);
+  // ──────────────────────────────────────────────────────
+
+  // Manual toggle (teacher can still override within current window)
   const handleToggleActive = async (value) => {
+    manualOverride.current = true;
+    lastPushedState.current = value;
+
     setUpdating(true);
     try {
       const token = await AsyncStorage.getItem('authToken');
-      await api.put('/classes/index.php', {
-        id: classData.id,
-        is_active: value
-      }, {
-        headers: { Authorization: `Bearer ${token}` }
-      });
+      await api.put(
+        '/classes/index.php',
+        { id: classData.id, is_active: value },
+        { headers: { Authorization: `Bearer ${token}` } }
+      );
       setIsActive(value);
       if (onRefresh) onRefresh();
     } catch (error) {
       console.error('Toggle active error:', error);
       Alert.alert('Error', 'Failed to update class status');
-      setIsActive(!value); // Revert on error
+      setIsActive(!value);
+      lastPushedState.current = null;
+      manualOverride.current = false;
     } finally {
       setUpdating(false);
     }
@@ -181,12 +374,11 @@ const ClassCard = ({ classData, onDelete, onRefresh, navigation }) => {
     setUpdating(true);
     try {
       const token = await AsyncStorage.getItem('authToken');
-      await api.put('/classes/index.php', {
-        id: classData.id,
-        notify_parents: value
-      }, {
-        headers: { Authorization: `Bearer ${token}` }
-      });
+      await api.put(
+        '/classes/index.php',
+        { id: classData.id, notify_parents: value },
+        { headers: { Authorization: `Bearer ${token}` } }
+      );
       setNotifyParents(value);
       if (onRefresh) onRefresh();
     } catch (error) {
@@ -198,12 +390,6 @@ const ClassCard = ({ classData, onDelete, onRefresh, navigation }) => {
     }
   };
 
-  const getAttendanceColor = (rate) => {
-    if (rate >= 90) return COLORS.success;
-    if (rate >= 75) return COLORS.warning;
-    return COLORS.error;
-  };
-
   const formatTime = (timeString) => {
     if (!timeString) return '';
     const [hours, minutes] = timeString.split(':');
@@ -213,29 +399,35 @@ const ClassCard = ({ classData, onDelete, onRefresh, navigation }) => {
     return `${displayHour}:${minutes} ${ampm}`;
   };
 
-  const scheduleDisplay = classData.days && classData.start_time && classData.end_time
-    ? `${classData.days} • ${formatTime(classData.start_time)} - ${formatTime(classData.end_time)}`
-    : 'No schedule set';
+  const scheduleDisplay =
+    classData.days && classData.start_time && classData.end_time
+      ? `${classData.days} • ${formatTime(classData.start_time)} - ${formatTime(classData.end_time)}`
+      : 'No schedule set';
 
   return (
-    <TouchableOpacity 
+    <TouchableOpacity
       style={styles.classCard}
       onPress={() => navigation.navigate('ClassDetail', { classData })}
       activeOpacity={0.7}
     >
       {/* Active/Inactive Toggle */}
-      <View 
+      <View
         style={styles.statusToggleContainer}
         onStartShouldSetResponder={() => true}
         onResponderRelease={(e) => e.stopPropagation()}
       >
         <View style={styles.statusTextContainer}>
-          <Ionicons 
-            name={isActive ? "checkmark-circle" : "close-circle"} 
-            size={18} 
-            color={isActive ? COLORS.success : COLORS.textSecondary} 
+          <Ionicons
+            name={isActive ? 'checkmark-circle' : 'close-circle'}
+            size={18}
+            color={isActive ? COLORS.success : COLORS.textSecondary}
           />
-          <Text style={[styles.statusText, { color: isActive ? COLORS.success : COLORS.textSecondary }]}>
+          <Text
+            style={[
+              styles.statusText,
+              { color: isActive ? COLORS.success : COLORS.textSecondary },
+            ]}
+          >
             {isActive ? 'Class is active' : 'Class is inactive'}
           </Text>
         </View>
@@ -248,18 +440,24 @@ const ClassCard = ({ classData, onDelete, onRefresh, navigation }) => {
         />
       </View>
 
-      <View 
+      {/* Notify Parents Toggle */}
+      <View
         style={styles.statusToggleContainer}
         onStartShouldSetResponder={() => true}
         onResponderRelease={(e) => e.stopPropagation()}
       >
         <View style={styles.statusTextContainer}>
-          <Ionicons 
-            name={notifyParents ? "mail-open" : "mail-unread-outline"}
+          <Ionicons
+            name={notifyParents ? 'mail-open' : 'mail-unread-outline'}
             size={18}
             color={notifyParents ? COLORS.info : COLORS.textSecondary}
           />
-          <Text style={[styles.statusText, { color: notifyParents ? COLORS.info : COLORS.textSecondary }]}>
+          <Text
+            style={[
+              styles.statusText,
+              { color: notifyParents ? COLORS.info : COLORS.textSecondary },
+            ]}
+          >
             {notifyParents ? 'Parent notifications on' : 'Parent notifications off'}
           </Text>
         </View>
@@ -272,6 +470,17 @@ const ClassCard = ({ classData, onDelete, onRefresh, navigation }) => {
         />
       </View>
 
+      {/* Auto-schedule notice */}
+      {classData.days && classData.start_time && classData.end_time && (
+        <View style={styles.autoScheduleNotice}>
+          <Ionicons name="time-outline" size={14} color={COLORS.primary} />
+          <Text style={styles.autoScheduleText}>
+            Auto-manages: {classData.days} •{' '}
+            {formatTime(classData.start_time)} – {formatTime(classData.end_time)}
+          </Text>
+        </View>
+      )}
+
       {!isActive && (
         <View style={styles.inactiveNotice}>
           <Ionicons name="information-circle-outline" size={14} color={COLORS.warning} />
@@ -281,6 +490,7 @@ const ClassCard = ({ classData, onDelete, onRefresh, navigation }) => {
         </View>
       )}
 
+      {/* Card Header */}
       <View style={styles.classCardHeader}>
         <View style={{ flex: 1 }}>
           <Text style={styles.classCode}>{classData.class_code}</Text>
@@ -289,7 +499,7 @@ const ClassCard = ({ classData, onDelete, onRefresh, navigation }) => {
             <Text style={styles.sectionText}>{classData.section}</Text>
           )}
         </View>
-        <TouchableOpacity 
+        <TouchableOpacity
           onPress={(e) => {
             e.stopPropagation();
             onDelete();
@@ -299,6 +509,7 @@ const ClassCard = ({ classData, onDelete, onRefresh, navigation }) => {
         </TouchableOpacity>
       </View>
 
+      {/* Card Body */}
       <View style={styles.classCardBody}>
         <View style={styles.scheduleContainer}>
           <Ionicons name="time-outline" size={16} color={COLORS.textSecondary} />
@@ -310,37 +521,11 @@ const ClassCard = ({ classData, onDelete, onRefresh, navigation }) => {
             <Text style={styles.scheduleText}>{classData.room}</Text>
           </View>
         )}
-
-        {/* <View style={styles.statsContainer}>
-          <View style={styles.statItem}>
-            <Ionicons name="people" size={18} color={COLORS.info} />
-            <Text style={styles.statValue}>{classData.enrolled || 0}</Text>
-            <Text style={styles.statLabel}>Enrolled</Text>
-          </View>
-
-          <View style={styles.statItem}>
-            <Ionicons name="checkmark-circle" size={18} color={COLORS.success} />
-            <Text style={styles.statValue}>{classData.present_today || 0}</Text>
-            <Text style={styles.statLabel}>Present</Text>
-          </View>
-
-          <View style={styles.statItem}>
-            <Ionicons name="trending-up" size={18} color={getAttendanceColor(classData.attendanceRate || 0)} />
-            <Text style={[styles.statValue, { color: getAttendanceColor(classData.attendanceRate || 0) }]}>
-              {classData.attendanceRate || 0}%
-            </Text>
-            <Text style={styles.statLabel}>Rate</Text>
-          </View>
-        </View> */}
       </View>
 
+      {/* Card Footer */}
       <View style={styles.classCardFooter}>
-        {/* <TouchableOpacity style={styles.actionButton} onPress={(e) => e.stopPropagation()}>
-          <Ionicons name="qr-code" size={18} color={COLORS.primary} />
-          <Text style={styles.actionButtonText}>Generate QR</Text>
-        </TouchableOpacity> */}
-
-        <TouchableOpacity 
+        <TouchableOpacity
           style={styles.actionButton}
           onPress={(e) => {
             e.stopPropagation();
@@ -351,7 +536,7 @@ const ClassCard = ({ classData, onDelete, onRefresh, navigation }) => {
           <Text style={styles.actionButtonText}>View Students</Text>
         </TouchableOpacity>
 
-        <TouchableOpacity 
+        <TouchableOpacity
           style={styles.actionButton}
           onPress={(e) => {
             e.stopPropagation();
@@ -366,6 +551,9 @@ const ClassCard = ({ classData, onDelete, onRefresh, navigation }) => {
   );
 };
 
+// ─────────────────────────────────────────────
+// STYLES
+// ─────────────────────────────────────────────
 const styles = StyleSheet.create({
   container: {
     flex: 1,
@@ -463,6 +651,21 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '600',
     marginLeft: 8,
+  },
+  autoScheduleNotice: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#EEF4FF',
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    borderRadius: 8,
+    marginBottom: 8,
+  },
+  autoScheduleText: {
+    fontSize: 12,
+    color: COLORS.primary,
+    marginLeft: 6,
+    fontWeight: '500',
   },
   inactiveNotice: {
     flexDirection: 'row',

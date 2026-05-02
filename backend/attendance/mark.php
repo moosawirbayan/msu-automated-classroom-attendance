@@ -10,7 +10,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
 }
 
 require_once '../core/Database.php';
-require_once '../core/NotificationService.php';
+
+$notificationServiceAvailable =
+    file_exists(__DIR__ . '/../core/NotificationService.php') &&
+    file_exists(__DIR__ . '/../vendor/autoload.php');
+if ($notificationServiceAvailable) {
+    require_once '../core/NotificationService.php';
+}
 
 $database = new Database();
 $db = $database->getConnection();
@@ -58,35 +64,54 @@ try {
         exit();
     }
 
-    // Check duplicate for today
-    $today = date('Y-m-d');
-    $dupStmt = $db->prepare("SELECT id FROM attendance WHERE student_id = ? AND class_id = ? AND DATE(check_in_time) = ?");
+    // Check if may existing attendance record ngayon (absent o present)
+    $today = (new DateTime('now', new DateTimeZone('Asia/Manila')))->format('Y-m-d');
+    $dupStmt = $db->prepare("SELECT id, status FROM attendance WHERE student_id = ? AND class_id = ? AND DATE(check_in_time) = ?");
     $dupStmt->execute([$studentDbId, $classId, $today]);
-    if ($dupStmt->rowCount() > 0) {
-        http_response_code(400);
-        echo json_encode(['success' => false, 'message' => 'Attendance already marked for today']);
-        exit();
-    }
+    $existing = $dupStmt->fetch(PDO::FETCH_ASSOC);
 
-    // Mark attendance
-    $markStmt = $db->prepare("INSERT INTO attendance (student_id, class_id, check_in_time, status) VALUES (?, ?, NOW(), 'present')");
-    $markStmt->execute([$studentDbId, $classId]);
+    if ($existing) {
+        if ($existing['status'] === 'present') {
+            http_response_code(400);
+            echo json_encode(['success' => false, 'message' => 'Attendance already marked as present for today']);
+            exit();
+        }
+
+        $updateStmt = $db->prepare("UPDATE attendance SET status = 'present', check_in_time = NOW() WHERE id = ?");
+        $updateStmt->execute([$existing['id']]);
+        $attendanceId = $existing['id'];
+        $action = 'updated';
+
+    } else {
+        $markStmt = $db->prepare("INSERT INTO attendance (student_id, class_id, check_in_time, status) VALUES (?, ?, NOW(), 'present')");
+        $markStmt->execute([$studentDbId, $classId]);
+        $attendanceId = $db->lastInsertId();
+        $action = 'inserted';
+    }
 
     $nameParts = array_filter([$student['first_name'], $student['middle_initial'] ? $student['middle_initial'].'.' : null, $student['last_name']]);
     $fullName  = implode(' ', $nameParts);
 
-    // Send email notification to parent/guardian if enabled for this class
+    // Send email notification
     $notificationSent = false;
     $classStmt = $db->prepare("SELECT class_name, notify_parents FROM classes WHERE id = ? LIMIT 1");
     $classStmt->execute([$classId]);
     $class = $classStmt->fetch(PDO::FETCH_ASSOC);
+
+    // DEBUG LOGS
+    error_log('[NOTIF] notificationServiceAvailable: ' . ($notificationServiceAvailable ? 'YES' : 'NO'));
+    error_log('[NOTIF] class found: ' . ($class ? 'YES' : 'NO'));
+    error_log('[NOTIF] notify_parents value: ' . ($class['notify_parents'] ?? 'NULL'));
 
     if ($class && (int)$class['notify_parents'] === 1) {
         $contactStmt = $db->prepare("SELECT parent_email, parent_name FROM students WHERE id = ? LIMIT 1");
         $contactStmt->execute([$studentDbId]);
         $contact = $contactStmt->fetch(PDO::FETCH_ASSOC);
 
-        if (!empty($contact['parent_email'])) {
+        error_log('[NOTIF] parent_email: ' . ($contact['parent_email'] ?? 'EMPTY'));
+        error_log('[NOTIF] class_exists NotificationService: ' . (class_exists('NotificationService') ? 'YES' : 'NO'));
+
+        if (!empty($contact['parent_email']) && $notificationServiceAvailable && class_exists('NotificationService')) {
             $notifier = new NotificationService();
             $notificationSent = $notifier->sendAttendanceEmail(
                 $contact['parent_email'],
@@ -96,19 +121,22 @@ try {
                 'present',
                 date('Y-m-d H:i:s')
             );
+            error_log('[NOTIF] sendAttendanceEmail result: ' . ($notificationSent ? 'SENT' : 'FAILED'));
         }
     }
 
     echo json_encode([
-        'success'        => true,
-        'message'        => 'Attendance marked successfully',
-        'student_name'   => $fullName,
-        'student_number' => $student['student_id'],
-        'attendance_id'  => $db->lastInsertId(),
+        'success'         => true,
+        'message'         => 'Attendance marked successfully',
+        'student_name'    => $fullName,
+        'student_number'  => $student['student_id'],
+        'attendance_id'   => $attendanceId,
+        'action'          => $action,
         'parent_notified' => $notificationSent,
     ]);
 
 } catch (Exception $e) {
+    error_log('[NOTIF] Exception: ' . $e->getMessage());
     http_response_code(500);
     echo json_encode(['success' => false, 'message' => $e->getMessage()]);
 }

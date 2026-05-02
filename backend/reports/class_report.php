@@ -73,7 +73,7 @@ try {
     $todayPresentStmt->execute([$classId, $today]);
     $todayPresent = $todayPresentStmt->fetch(PDO::FETCH_ASSOC);
 
-    // Get per-student attendance summary
+    // Get per-student basic info (without counts — will recompute from day_records)
     $studentsStmt = $db->prepare("
         SELECT 
             s.id,
@@ -82,32 +82,34 @@ try {
             s.middle_initial,
             s.last_name,
             s.email,
-            s.phone,
-            COUNT(CASE WHEN a.status = 'present' THEN 1 END) as present_count,
-            COUNT(CASE WHEN a.status = 'absent' THEN 1 END) as absent_count,
-            COUNT(CASE WHEN a.status = 'late' THEN 1 END) as late_count,
-            COUNT(a.id) as total_sessions,
-            ROUND(
-                (COUNT(CASE WHEN a.status = 'present' THEN 1 END) / NULLIF(COUNT(a.id), 0)) * 100, 1
-            ) as attendance_rate
+            s.phone
         FROM students s
         INNER JOIN enrollments e ON s.id = e.student_id AND e.class_id = ? AND e.status = 'active'
-        LEFT JOIN attendance a ON s.id = a.student_id AND a.class_id = ?
-        GROUP BY s.id, s.student_id, s.first_name, s.middle_initial, s.last_name, s.email, s.phone
         ORDER BY s.last_name, s.first_name
     ");
-    $studentsStmt->execute([$classId, $classId]);
+    $studentsStmt->execute([$classId]);
     $students = $studentsStmt->fetchAll(PDO::FETCH_ASSOC);
 
-    // Build per-day attendance status for each student
-    $sessionDatesStmt = $db->prepare("\n        SELECT DISTINCT DATE(check_in_time) as session_date\n        FROM attendance\n        WHERE class_id = ?\n        ORDER BY session_date DESC\n    ");
+    // Get all unique session dates for this class
+    $sessionDatesStmt = $db->prepare("
+        SELECT DISTINCT DATE(check_in_time) as session_date
+        FROM attendance
+        WHERE class_id = ?
+        ORDER BY session_date DESC
+    ");
     $sessionDatesStmt->execute([$classId]);
     $sessionDates = $sessionDatesStmt->fetchAll(PDO::FETCH_COLUMN);
 
-    $attendanceByDayStmt = $db->prepare("\n        SELECT student_id, DATE(check_in_time) as day, status\n        FROM attendance\n        WHERE class_id = ?\n    ");
+    // Get all attendance records for this class
+    $attendanceByDayStmt = $db->prepare("
+        SELECT student_id, DATE(check_in_time) as day, status
+        FROM attendance
+        WHERE class_id = ?
+    ");
     $attendanceByDayStmt->execute([$classId]);
     $attendanceByDayRows = $attendanceByDayStmt->fetchAll(PDO::FETCH_ASSOC);
 
+    // Build a map: student_id => [ date => status ]
     $studentDayStatusMap = [];
     foreach ($attendanceByDayRows as $row) {
         $sid = (string)$row['student_id'];
@@ -117,6 +119,7 @@ try {
         $studentDayStatusMap[$sid][$row['day']] = $row['status'];
     }
 
+    // Build day_records for each student and recompute counts from it
     foreach ($students as &$student) {
         $sid = (string)$student['id'];
         $student['day_records'] = [];
@@ -124,30 +127,43 @@ try {
         foreach ($sessionDates as $day) {
             $status = $studentDayStatusMap[$sid][$day] ?? 'absent';
             $student['day_records'][] = [
-                'date' => $day,
+                'date'   => $day,
                 'status' => $status,
             ];
         }
+
+        // ✅ Recompute counts based on ALL class sessions (including pre-enrollment)
+        $presentCount  = count(array_filter($student['day_records'], fn($r) => $r['status'] === 'present' || $r['status'] === 'late'));
+        $absentCount   = count(array_filter($student['day_records'], fn($r) => $r['status'] === 'absent'));
+        $totalSessions = count($student['day_records']);
+
+        $student['present_count']   = $presentCount;
+        $student['absent_count']    = $absentCount;
+        $student['late_count']      = count(array_filter($student['day_records'], fn($r) => $r['status'] === 'late'));
+        $student['total_sessions']  = $totalSessions;
+        $student['attendance_rate'] = $totalSessions > 0
+            ? round(($presentCount / $totalSessions) * 100, 1)
+            : 0;
     }
     unset($student);
 
-    // Calculate overall rate
+    // ✅ Overall rate based on recomputed values
     $totalPresent = array_sum(array_column($students, 'present_count'));
     $totalRecords = array_sum(array_column($students, 'total_sessions'));
-    $overallRate = $totalRecords > 0 ? round(($totalPresent / $totalRecords) * 100, 1) : 0;
+    $overallRate  = $totalRecords > 0 ? round(($totalPresent / $totalRecords) * 100, 1) : 0;
 
     echo json_encode([
-        'success' => true,
-        'class' => $class,
-        'summary' => [
-            'total_enrolled' => (int)($enrolled['total'] ?? 0),
-            'total_sessions' => (int)($sessions['sessions'] ?? 0),
-            'present_today' => (int)($todayPresent['present'] ?? 0),
+        'success'      => true,
+        'class'        => $class,
+        'summary'      => [
+            'total_enrolled'          => (int)($enrolled['total'] ?? 0),
+            'total_sessions'          => (int)($sessions['sessions'] ?? 0),
+            'present_today'           => (int)($todayPresent['present'] ?? 0),
             'overall_attendance_rate' => $overallRate,
         ],
         'session_dates' => $sessionDates,
-        'students' => $students,
-        'generated_at' => date('Y-m-d H:i:s'),
+        'students'      => $students,
+        'generated_at'  => date('Y-m-d H:i:s'),
     ]);
 
 } catch (Exception $e) {

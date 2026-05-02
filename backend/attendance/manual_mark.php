@@ -12,7 +12,13 @@ header("Content-Type: application/json");
 if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') { http_response_code(200); exit(); }
 
 require_once '../core/Database.php';
-require_once '../core/NotificationService.php';
+
+$notificationServiceAvailable =
+    file_exists(__DIR__ . '/../core/NotificationService.php') &&
+    file_exists(__DIR__ . '/../vendor/autoload.php');
+if ($notificationServiceAvailable) {
+    require_once '../core/NotificationService.php';
+}
 
 $database = new Database();
 $db = $database->getConnection();
@@ -59,7 +65,7 @@ try {
     $notifier = null;
     $notifyEnabled = ((int)($class['notify_parents'] ?? 1) === 1);
 
-    if ($notifyEnabled) {
+    if ($notifyEnabled && $notificationServiceAvailable && class_exists('NotificationService')) {
         $notifier = new NotificationService();
     }
 

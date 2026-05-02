@@ -23,7 +23,6 @@ export default function AddClassScreen({ navigation }) {
   const [classData, setClassData] = useState({
     class_name: '',
     class_code: '',
-    grade: '',
     section: '',
     description: '',
     start_time: new Date(),
@@ -61,9 +60,8 @@ export default function AddClassScreen({ navigation }) {
   };
 
   const handleSaveClass = async () => {
-    // Validation
-    if (!classData.class_name || !classData.class_code || !classData.grade || !classData.section) {
-      Alert.alert('Error', 'Please fill in all required fields (Class Name, Code, Grade, Section)');
+    if (!classData.class_name || !classData.class_code || !classData.section) {
+      Alert.alert('Error', 'Please fill in all required fields (Class Name, Code, Section)');
       return;
     }
 
@@ -72,29 +70,23 @@ export default function AddClassScreen({ navigation }) {
       return;
     }
 
-    // Prevent duplicate submissions
-    if (loading) {
-      return;
-    }
+    if (loading) return;
 
     setLoading(true);
 
     try {
       const token = await AsyncStorage.getItem('authToken');
       
-      // Combine grade and section
-      const combinedSection = `Grade ${classData.grade} - ${classData.section}`;
-      
       const payload = {
         class_name: classData.class_name,
         class_code: classData.class_code,
-        section: combinedSection,
+        section: classData.section,
         description: classData.description,
         start_time: formatTimeForDB(classData.start_time),
         end_time: formatTimeForDB(classData.end_time),
         days: classData.days.join(', '),
         room: classData.room,
-        is_active: true, // New classes are active by default
+        is_active: true,
         notify_parents: classData.notify_parents,
       };
 
@@ -104,10 +96,7 @@ export default function AddClassScreen({ navigation }) {
 
       if (response.data.success) {
         Alert.alert('Success', 'Class created successfully', [
-          {
-            text: 'OK',
-            onPress: () => navigation.goBack()
-          }
+          { text: 'OK', onPress: () => navigation.goBack() }
         ]);
       } else {
         setLoading(false);
@@ -116,8 +105,6 @@ export default function AddClassScreen({ navigation }) {
     } catch (error) {
       console.error('Create class error:', error);
       setLoading(false);
-      
-      // Show the actual error message from the backend
       const errorMessage = error.response?.data?.message || 'Failed to create class. Please try again.';
       Alert.alert('Error', errorMessage);
     }
@@ -140,6 +127,7 @@ export default function AddClassScreen({ navigation }) {
 
       <ScrollView style={styles.content} showsVerticalScrollIndicator={false}>
         <View style={styles.formContainer}>
+
           {/* Class Name */}
           <View style={styles.inputGroup}>
             <Text style={styles.label}>Class Name *</Text>
@@ -165,31 +153,17 @@ export default function AddClassScreen({ navigation }) {
             />
           </View>
 
-          {/* Grade and Section Row */}
-          <View style={styles.rowContainer}>
-            <View style={[styles.inputGroup, { flex: 1, marginRight: 8 }]}>
-              <Text style={styles.label}>Grade *</Text>
-              <TextInput
-                style={styles.input}
-                placeholder="e.g., 10"
-                placeholderTextColor={COLORS.gray}
-                value={classData.grade}
-                onChangeText={(text) => setClassData({...classData, grade: text})}
-                keyboardType="numeric"
-              />
-            </View>
-
-            <View style={[styles.inputGroup, { flex: 1, marginLeft: 8 }]}>
-              <Text style={styles.label}>Section *</Text>
-              <TextInput
-                style={styles.input}
-                placeholder="e.g., A"
-                placeholderTextColor={COLORS.gray}
-                value={classData.section}
-                onChangeText={(text) => setClassData({...classData, section: text})}
-                autoCapitalize="characters"
-              />
-            </View>
+          {/* Section only */}
+          <View style={styles.inputGroup}>
+            <Text style={styles.label}>Section *</Text>
+            <TextInput
+              style={styles.input}
+              placeholder="e.g., A"
+              placeholderTextColor={COLORS.gray}
+              value={classData.section}
+              onChangeText={(text) => setClassData({...classData, section: text})}
+              autoCapitalize="characters"
+            />
           </View>
 
           {/* Description */}
@@ -232,7 +206,7 @@ export default function AddClassScreen({ navigation }) {
             </View>
           </View>
 
-          {/* Days of Week Picker */}
+          {/* Days of Week */}
           <View style={styles.inputGroup}>
             <Text style={styles.label}>Days *</Text>
             <View style={styles.daysContainer}>
@@ -268,6 +242,7 @@ export default function AddClassScreen({ navigation }) {
             />
           </View>
 
+          {/* Parent Notifications Toggle */}
           <View style={styles.toggleCard}>
             <View style={{ flex: 1 }}>
               <Text style={styles.toggleTitle}>Parent Email Notifications</Text>
@@ -290,10 +265,10 @@ export default function AddClassScreen({ navigation }) {
             <Ionicons name="checkmark-circle" size={24} color={COLORS.white} />
             <Text style={styles.saveButtonText}>{loading ? 'Saving...' : 'Save Class'}</Text>
           </TouchableOpacity>
+
         </View>
       </ScrollView>
 
-      {/* Time Pickers */}
       {showStartPicker && (
         <DateTimePicker
           value={classData.start_time}
@@ -302,9 +277,7 @@ export default function AddClassScreen({ navigation }) {
           display={Platform.OS === 'ios' ? 'spinner' : 'default'}
           onChange={(event, selectedDate) => {
             setShowStartPicker(Platform.OS === 'ios');
-            if (selectedDate) {
-              setClassData({...classData, start_time: selectedDate});
-            }
+            if (selectedDate) setClassData({...classData, start_time: selectedDate});
           }}
         />
       )}
@@ -317,9 +290,7 @@ export default function AddClassScreen({ navigation }) {
           display={Platform.OS === 'ios' ? 'spinner' : 'default'}
           onChange={(event, selectedDate) => {
             setShowEndPicker(Platform.OS === 'ios');
-            if (selectedDate) {
-              setClassData({...classData, end_time: selectedDate});
-            }
+            if (selectedDate) setClassData({...classData, end_time: selectedDate});
           }}
         />
       )}
@@ -328,143 +299,48 @@ export default function AddClassScreen({ navigation }) {
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: COLORS.background,
-  },
-  header: {
-    paddingTop: 50,
-    paddingBottom: 20,
-    paddingHorizontal: 16,
-  },
-  headerContent: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-  },
-  backButton: {
-    padding: 8,
-  },
-  headerTitle: {
-    fontSize: 20,
-    fontWeight: 'bold',
-    color: COLORS.white,
-  },
-  content: {
-    flex: 1,
-  },
-  formContainer: {
-    padding: 20,
-  },
-  inputGroup: {
-    marginBottom: 20,
-  },
-  label: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: COLORS.textPrimary,
-    marginBottom: 8,
-  },
+  container: { flex: 1, backgroundColor: COLORS.background },
+  header: { paddingTop: 50, paddingBottom: 20, paddingHorizontal: 16 },
+  headerContent: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  backButton: { padding: 8 },
+  headerTitle: { fontSize: 20, fontWeight: 'bold', color: COLORS.white },
+  content: { flex: 1 },
+  formContainer: { padding: 20 },
+  inputGroup: { marginBottom: 20 },
+  label: { fontSize: 14, fontWeight: '600', color: COLORS.textPrimary, marginBottom: 8 },
   input: {
-    backgroundColor: COLORS.white,
-    borderRadius: 12,
-    padding: 14,
-    fontSize: 16,
-    color: COLORS.textPrimary,
-    borderWidth: 1,
-    borderColor: COLORS.border,
+    backgroundColor: COLORS.white, borderRadius: 12, padding: 14,
+    fontSize: 16, color: COLORS.textPrimary, borderWidth: 1, borderColor: COLORS.border,
   },
-  toggleCard: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    borderWidth: 1,
-    borderColor: COLORS.border,
-    borderRadius: 12,
-    paddingHorizontal: 14,
-    paddingVertical: 14,
-    marginBottom: 18,
-    backgroundColor: COLORS.white,
-  },
-  toggleTitle: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: COLORS.textPrimary,
-  },
-  toggleSubtitle: {
-    fontSize: 12,
-    color: COLORS.textSecondary,
-    marginTop: 2,
-  },
-  textArea: {
-    height: 100,
-    textAlignVertical: 'top',
-  },
-  rowContainer: {
-    flexDirection: 'row',
-  },
+  textArea: { height: 100, textAlignVertical: 'top' },
+  rowContainer: { flexDirection: 'row' },
   timeButton: {
-    backgroundColor: COLORS.white,
-    borderRadius: 12,
-    padding: 14,
-    flexDirection: 'row',
-    alignItems: 'center',
-    borderWidth: 1,
-    borderColor: COLORS.border,
+    backgroundColor: COLORS.white, borderRadius: 12, padding: 14,
+    flexDirection: 'row', alignItems: 'center', borderWidth: 1, borderColor: COLORS.border,
   },
-  timeText: {
-    fontSize: 16,
-    color: COLORS.textPrimary,
-    marginLeft: 10,
-    flex: 1,
-  },
-  daysContainer: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 8,
-  },
+  timeText: { fontSize: 16, color: COLORS.textPrimary, marginLeft: 10, flex: 1 },
+  daysContainer: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
   dayChip: {
-    paddingHorizontal: 16,
-    paddingVertical: 10,
-    borderRadius: 20,
-    backgroundColor: COLORS.white,
-    borderWidth: 1,
-    borderColor: COLORS.border,
+    paddingHorizontal: 16, paddingVertical: 10, borderRadius: 20,
+    backgroundColor: COLORS.white, borderWidth: 1, borderColor: COLORS.border,
   },
-  dayChipSelected: {
-    backgroundColor: COLORS.primary,
-    borderColor: COLORS.primary,
+  dayChipSelected: { backgroundColor: COLORS.primary, borderColor: COLORS.primary },
+  dayChipText: { fontSize: 14, fontWeight: '600', color: COLORS.textSecondary },
+  dayChipTextSelected: { color: COLORS.white },
+  toggleCard: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+    borderWidth: 1, borderColor: COLORS.border, borderRadius: 12,
+    paddingHorizontal: 14, paddingVertical: 14, marginBottom: 18, backgroundColor: COLORS.white,
   },
-  dayChipText: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: COLORS.textSecondary,
-  },
-  dayChipTextSelected: {
-    color: COLORS.white,
-  },
+  toggleTitle: { fontSize: 14, fontWeight: '600', color: COLORS.textPrimary },
+  toggleSubtitle: { fontSize: 12, color: COLORS.textSecondary, marginTop: 2 },
   saveButton: {
-    backgroundColor: COLORS.primary,
-    borderRadius: 12,
-    padding: 16,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginTop: 20,
-    elevation: 3,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.25,
-    shadowRadius: 3.84,
+    backgroundColor: COLORS.primary, borderRadius: 12, padding: 16,
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
+    marginTop: 20, elevation: 3,
+    shadowColor: '#000', shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.25, shadowRadius: 3.84,
   },
-  saveButtonDisabled: {
-    backgroundColor: COLORS.gray,
-    opacity: 0.6,
-  },
-  saveButtonText: {
-    fontSize: 18,
-    fontWeight: 'bold',
-    color: COLORS.white,
-    marginLeft: 10,
-  },
+  saveButtonDisabled: { backgroundColor: COLORS.gray, opacity: 0.6 },
+  saveButtonText: { fontSize: 18, fontWeight: 'bold', color: COLORS.white, marginLeft: 10 },
 });

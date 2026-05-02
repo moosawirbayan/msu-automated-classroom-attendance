@@ -2,6 +2,7 @@
 /**
  * GET /attendance/student_history.php?student_id={id}&class_id={id}
  * Returns per-date attendance history for one student in one class.
+ * No record on a session date = absent automatically.
  */
 header("Access-Control-Allow-Origin: *");
 header("Access-Control-Allow-Methods: GET, OPTIONS");
@@ -14,6 +15,9 @@ require_once '../core/Database.php';
 
 $database = new Database();
 $db = $database->getConnection();
+
+// ✅ PHP timezone lang — PH time na ang stored sa DB
+date_default_timezone_set('Asia/Manila');
 
 $authHeader = $_SERVER['HTTP_AUTHORIZATION'] ?? (function_exists('getallheaders') ? (getallheaders()['Authorization'] ?? '') : '');
 $token = str_replace('Bearer ', '', $authHeader);
@@ -45,26 +49,62 @@ try {
         echo json_encode(['success' => false, 'message' => 'Access denied']); exit();
     }
 
-    // Per-date attendance records
+    // ✅ Get ALL unique session dates for this class
+    $datesStmt = $db->prepare("
+        SELECT DISTINCT
+            DATE_FORMAT(a.check_in_time, '%Y-%m-%d') AS date
+        FROM attendance a
+        WHERE a.class_id = ?
+        ORDER BY date DESC
+    ");
+    $datesStmt->execute([$classId]);
+    $sessionDates = array_column($datesStmt->fetchAll(PDO::FETCH_ASSOC), 'date');
+
+    // ✅ Get actual attendance records for THIS student only
     $stmt = $db->prepare("
         SELECT
-            a.id,
-            DATE_FORMAT(a.check_in_time, '%Y-%m-%d')       AS date,
-            DATE_FORMAT(a.check_in_time, '%M %d, %Y')      AS date_formatted,
-            DATE_FORMAT(a.check_in_time, '%h:%i %p')       AS time_in,
-            a.status,
-            a.notes
+            DATE_FORMAT(a.check_in_time, '%Y-%m-%d') AS date,
+            DATE_FORMAT(a.check_in_time, '%h:%i %p')  AS time_in,
+            a.status
         FROM attendance a
         WHERE a.student_id = ? AND a.class_id = ?
-        ORDER BY a.check_in_time DESC
     ");
     $stmt->execute([$studentId, $classId]);
-    $records = $stmt->fetchAll(PDO::FETCH_ASSOC);
+    $rawRecords = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+    // ✅ Map records by date
+    $recordsByDate = [];
+    foreach ($rawRecords as $rec) {
+        $recordsByDate[$rec['date']] = $rec;
+    }
+
+    // ✅ Build complete history — lahat ng session dates
+    $records = [];
+    foreach ($sessionDates as $date) {
+        if (isset($recordsByDate[$date])) {
+            $rec = $recordsByDate[$date];
+            $records[] = [
+                'date'           => $date,
+                'date_formatted' => date('F d, Y', strtotime($date)),
+                'time_in'        => $rec['time_in'],
+                'status'         => $rec['status'],
+            ];
+        } else {
+            // ✅ Walang record = absent automatically
+            $records[] = [
+                'date'           => $date,
+                'date_formatted' => date('F d, Y', strtotime($date)),
+                'time_in'        => '—',
+                'status'         => 'absent',
+            ];
+        }
+    }
 
     echo json_encode([
         'success' => true,
         'records' => $records,
     ]);
+
 } catch (Exception $e) {
     http_response_code(500);
     echo json_encode(['success' => false, 'message' => $e->getMessage()]);
