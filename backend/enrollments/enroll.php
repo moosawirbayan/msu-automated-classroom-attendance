@@ -90,17 +90,12 @@ try {
         exit();
     }
 
-    // Find existing student by student_id first
+    // Find existing student by student_id ONLY
+    // ✅ FIX: Removed email fallback lookup — email is NOT a unique student identifier.
+    //         Two different students can share the same email address.
     $checkStudent = $db->prepare('SELECT id FROM students WHERE student_id = ? LIMIT 1');
     $checkStudent->execute([$data->student_id]);
     $existingStudent = $checkStudent->fetch(PDO::FETCH_ASSOC);
-
-    // If not found by student_id, fallback to email match (when provided)
-    if (!$existingStudent && !empty($studentEmail)) {
-        $checkByEmail = $db->prepare('SELECT id FROM students WHERE email = ? LIMIT 1');
-        $checkByEmail->execute([$studentEmail]);
-        $existingStudent = $checkByEmail->fetch(PDO::FETCH_ASSOC);
-    }
 
     if ($existingStudent) {
         $studentDbId = (int)$existingStudent['id'];
@@ -114,7 +109,7 @@ try {
             exit();
         }
 
-        // ✅ Update existing student — includes gender and year_level now
+        // Update existing student info
         $updateStudent = $db->prepare(
             'UPDATE students
              SET parent_email = COALESCE(NULLIF(?, ""), parent_email),
@@ -138,7 +133,7 @@ try {
         ]);
 
     } else {
-        // ✅ Create new student — includes gender and year_level now
+        // Create new student
         $insertStudent = $db->prepare(
             'INSERT INTO students
                 (student_id, first_name, middle_initial, last_name, gender, year_level,
@@ -150,8 +145,8 @@ try {
             trim($data->first_name),
             !empty(trim($data->middle_initial ?? '')) ? trim($data->middle_initial) : null,
             trim($data->last_name),
-            !empty($gender)       ? $gender     : null,
-            !empty($yearLevel)    ? $yearLevel   : null,
+            !empty($gender)       ? $gender      : null,
+            !empty($yearLevel)    ? $yearLevel    : null,
             !empty($studentEmail) ? $studentEmail : null,
             !empty($parentEmail)  ? $parentEmail  : null,
             !empty(trim($data->parent_name ?? '')) ? trim($data->parent_name) : null,
