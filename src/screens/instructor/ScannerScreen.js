@@ -12,7 +12,6 @@ import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect } from '@react-navigation/native'; // ✅ DAGDAG
 import { COLORS } from '../../constants/colors';
 import api from '../../config/api';
-import { isOnline, saveOfflineAttendance, syncOfflineQueue, getUnsyncedCount } from '../../config/offlineSync'; // ✅ OFFLINE SUPPORT
 
 let CameraView, useCameraPermissions;
 if (Platform.OS !== 'web') {
@@ -52,32 +51,6 @@ function NativeScanner({ scanned, setScanned, paused, setPaused }) {
   const [activeClasses, setActiveClasses] = useState([]);
   const [selectedClassId, setSelectedClassId] = useState(null);
   const [loadingClasses, setLoadingClasses] = useState(false); // ✅ loading indicator
-  const [unsyncedCount, setUnsyncedCount] = useState(0); // ✅ OFFLINE: count ng hindi pa na-sync
-
-  // ✅ OFFLINE: I-check ang unsynced count at i-sync kapag may internet
-  useFocusEffect(
-    useCallback(() => {
-      const checkAndSync = async () => {
-        const count = await getUnsyncedCount();
-        setUnsyncedCount(count);
-
-        if (count > 0) {
-          const online = await isOnline();
-          if (online) {
-            const result = await syncOfflineQueue();
-            if (result.synced > 0) {
-              setUnsyncedCount(0);
-              Alert.alert(
-                '✅ Synced',
-                `${result.synced} offline attendance record(s) have been synced.`
-              );
-            }
-          }
-        }
-      };
-      checkAndSync();
-    }, [])
-  );
 
   // ✅ FIXED: useFocusEffect — mag-rere-refresh ang classes every time
   // bumabalik sa Scanner screen (e.g. galing sa ibang tab or screen)
@@ -223,52 +196,24 @@ function NativeScanner({ scanned, setScanned, paused, setPaused }) {
           text: 'Confirm',
           onPress: async () => {
             try {
-              const online = await isOnline(); // ✅ OFFLINE: i-check ang internet
-
-              if (online) {
-                // ✅ May internet — normal flow
-                const response = await api.post('/attendance/mark.php', {
-                  studentId: cleanStudentDbId,
-                  classId: selectedClassId,
-                });
-                if (response.data.success) {
-                  // ✅ OFFLINE: i-sync ang queued records kapag may internet
-                  syncOfflineQueue().then(async (result) => {
-                    if (result.synced > 0) {
-                      setUnsyncedCount(0);
-                    }
-                  });
-                  Alert.alert(
-                    '✓ Attendance Marked',
-                    `${response.data.student_name} has been marked present.`,
-                    [{ text: 'OK', onPress: () => setScanned(false) }]
-                  );
-                } else {
-                  Alert.alert('Failed', response.data.message || 'Could not mark attendance.', [
-                    { text: 'OK', onPress: () => setScanned(false) },
-                  ]);
-                }
-              } else {
-                // ✅ OFFLINE: Walang internet — i-save locally
-                await saveOfflineAttendance(cleanStudentDbId, selectedClassId, studentName);
-                const newCount = await getUnsyncedCount();
-                setUnsyncedCount(newCount);
+              const response = await api.post('/attendance/mark.php', {
+                studentId: cleanStudentDbId,
+                classId: selectedClassId,
+              });
+              if (response.data.success) {
                 Alert.alert(
-                  '📴 Saved Offline',
-                  `${studentName} has been saved offline.\nWill sync when internet is available.`,
+                  '✓ Attendance Marked',
+                  `${response.data.student_name} has been marked present.`,
                   [{ text: 'OK', onPress: () => setScanned(false) }]
                 );
+              } else {
+                Alert.alert('Failed', response.data.message || 'Could not mark attendance.', [
+                  { text: 'OK', onPress: () => setScanned(false) },
+                ]);
               }
             } catch (error) {
-              // ✅ OFFLINE: Network error — i-save locally
-              await saveOfflineAttendance(cleanStudentDbId, selectedClassId, studentName);
-              const newCount = await getUnsyncedCount();
-              setUnsyncedCount(newCount);
-              Alert.alert(
-                '📴 Saved Offline',
-                `${studentName} has been saved offline.\nWill sync when internet is available.`,
-                [{ text: 'OK', onPress: () => setScanned(false) }]
-              );
+              const msg = error.response?.data?.message || 'Failed to mark attendance.';
+              Alert.alert('Error', msg, [{ text: 'OK', onPress: () => setScanned(false) }]);
             }
           },
         },
@@ -294,22 +239,12 @@ function NativeScanner({ scanned, setScanned, paused, setPaused }) {
                 <Ionicons name="book-outline" size={16} color="#fff" />
                 <Text style={styles.classPickerText}>
                   {loadingClasses
-                    ? 'Loading classes…'
+                    ? 'Loading classes…'                          // ✅ loading state
                     : selectedClass
                       ? `${selectedClass.class_code} - ${selectedClass.class_name}`
                       : 'Select Active Class'}
                 </Text>
               </TouchableOpacity>
-
-              {/* ✅ OFFLINE: Show unsynced badge */}
-              {unsyncedCount > 0 && (
-                <View style={styles.offlineBadge}>
-                  <Ionicons name="cloud-offline-outline" size={14} color="#fff" />
-                  <Text style={styles.offlineBadgeText}>
-                    {unsyncedCount} offline record{unsyncedCount > 1 ? 's' : ''} pending sync
-                  </Text>
-                </View>
-              )}
             </View>
 
             {/* Viewfinder corners */}
@@ -362,9 +297,6 @@ const styles = StyleSheet.create({
   classPickerText: { color: '#fff', fontSize: 13, fontWeight: '600', marginLeft: 6 },
   headerTitle: { fontSize: 24, fontWeight: 'bold', color: '#fff', marginBottom: 6 },
   headerSubtitle: { fontSize: 14, color: 'rgba(255,255,255,0.75)' },
-  // ✅ OFFLINE: Badge style
-  offlineBadge: { marginTop: 8, flexDirection: 'row', alignItems: 'center', backgroundColor: 'rgba(255,100,0,0.8)', borderRadius: 20, paddingHorizontal: 10, paddingVertical: 5 },
-  offlineBadgeText: { color: '#fff', fontSize: 12, fontWeight: '600', marginLeft: 4 },
   scanArea: { width: 260, height: 260, position: 'relative' },
   corner: { position: 'absolute', width: 36, height: 36, borderColor: '#fff' },
   cornerTL: { top: 0,    left: 0,   borderTopWidth: 4,    borderLeftWidth: 4 },
